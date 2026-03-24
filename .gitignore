@@ -1,0 +1,62 @@
+# -----------------------------
+# Build / CMake
+# -----------------------------
+/build/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/compile_commands.json
+/Makefile
+/install_manifest.txt
+
+# -----------------------------
+# Runtime outputs
+# -----------------------------
+/results/logs/
+/results/runs/
+/results/tables/
+*.log
+
+# -----------------------------
+# Downloaded data / generated indexes
+# -----------------------------
+/data/beir/
+/data/indexes/
+/data/processed/
+/data/chunks/
+/data/raw/
+!/data/raw/.gitkeep
+
+# -----------------------------
+# Local model artifacts
+# -----------------------------
+/models/**/*.gguf
+/models/**/*.onnx
+/models/**/tokenizer.json
+/models/**/tokenizer_config.json
+/models/**/special_tokens_map.json
+/models/**/vocab*.txt
+/models/**/config.json
+
+# -----------------------------
+# Third-party dependencies (repro via setup scripts)
+# -----------------------------
+/third_party/llama.cpp/
+/third_party/onnxruntime-linux-x64-1.24.3/
+/third_party/*.tgz
+
+# -----------------------------
+# Local/private notes
+# -----------------------------
+/.local/
+/.private/
+/docs/internal/
+
+# -----------------------------
+# Editor / OS noise
+# -----------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store

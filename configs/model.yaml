@@ -1,0 +1,15 @@
+llama_model_path: "models/gemma/gemma-3-270m-it-Q4_K_S.gguf"
+onnx_model_path: "models/all-MiniLM-L6-v2-onnx/model.onnx"
+tokenizer_json_path: "models/all-MiniLM-L6-v2-onnx/tokenizer.json"
+
+# Raspberry Pi target 기준 기본값: CPU-only
+n_gpu_layers: 0
+n_ctx: 2048
+n_batch: 512
+n_threads: 4
+
+max_new_tokens: 32
+temperature: 0.2
+top_k: 40
+top_p: 0.9
+seed: 42

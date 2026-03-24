@@ -1,0 +1,160 @@
+#include "generator.hpp"
+
+#include <algorithm>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include <llama.h>
+
+namespace rag {
+
+namespace {
+
+void silentLlamaLog(enum ggml_log_level /* level */, const char* /* text */, void* /* user_data */) {}
+
+struct ContextDeleter {
+  void operator()(llama_context* ctx) const {
+    if (ctx != nullptr) {
+      llama_free(ctx);
+    }
+  }
+};
+
+struct SamplerDeleter {
+  void operator()(llama_sampler* sampler) const {
+    if (sampler != nullptr) {
+      llama_sampler_free(sampler);
+    }
+  }
+};
+
+}  // namespace
+
+Generator::Generator(ModelConfig config) : config_(std::move(config)), model_(nullptr), vocab_(nullptr) {
+  llama_log_set(silentLlamaLog, nullptr);
+  llama_backend_init();
+
+  llama_model_params model_params = llama_model_default_params();
+  model_params.n_gpu_layers = config_.n_gpu_layers;
+
+  model_ = llama_model_load_from_file(config_.llama_model_path.c_str(), model_params);
+  if (model_ == nullptr) {
+    throw std::runtime_error("Failed to load GGUF model: " + config_.llama_model_path);
+  }
+
+  vocab_ = llama_model_get_vocab(model_);
+  if (vocab_ == nullptr) {
+    throw std::runtime_error("Failed to get model vocabulary.");
+  }
+}
+
+Generator::~Generator() {
+  if (model_ != nullptr) {
+    llama_model_free(model_);
+    model_ = nullptr;
+  }
+}
+
+std::string Generator::generate(const std::string& prompt) const {
+  if (model_ == nullptr || vocab_ == nullptr) {
+    throw std::runtime_error("Generator model is not initialized.");
+  }
+
+  const int n_prompt = -llama_tokenize(vocab_, prompt.c_str(), static_cast<int32_t>(prompt.size()), nullptr, 0, true, true);
+  if (n_prompt <= 0) {
+    throw std::runtime_error("Failed to tokenize prompt.");
+  }
+
+  std::vector<llama_token> prompt_tokens(static_cast<size_t>(n_prompt));
+  if (llama_tokenize(vocab_,
+                     prompt.c_str(),
+                     static_cast<int32_t>(prompt.size()),
+                     prompt_tokens.data(),
+                     static_cast<int32_t>(prompt_tokens.size()),
+                     true,
+                     true) < 0) {
+    throw std::runtime_error("Failed to tokenize prompt into token buffer.");
+  }
+
+  const int context_limit = std::max(128, config_.n_ctx);
+  const int generation_limit = std::max(1, config_.max_new_tokens);
+  const int max_prompt_tokens = std::max(16, context_limit - generation_limit);
+  if (static_cast<int>(prompt_tokens.size()) > max_prompt_tokens) {
+    prompt_tokens.erase(prompt_tokens.begin(), prompt_tokens.end() - max_prompt_tokens);
+  }
+
+  llama_context_params ctx_params = llama_context_default_params();
+  ctx_params.n_ctx = static_cast<uint32_t>(context_limit);
+  ctx_params.n_batch =
+      static_cast<uint32_t>(std::min(context_limit, std::max(config_.n_batch, static_cast<int>(prompt_tokens.size()))));
+  ctx_params.n_threads = std::max(1, config_.n_threads);
+  ctx_params.n_threads_batch = std::max(1, config_.n_threads);
+  ctx_params.no_perf = false;
+
+  std::unique_ptr<llama_context, ContextDeleter> ctx(llama_init_from_model(model_, ctx_params));
+  if (!ctx) {
+    throw std::runtime_error("Failed to create llama context.");
+  }
+
+  auto sampler_params = llama_sampler_chain_default_params();
+  std::unique_ptr<llama_sampler, SamplerDeleter> sampler(llama_sampler_chain_init(sampler_params));
+  if (!sampler) {
+    throw std::runtime_error("Failed to create llama sampler chain.");
+  }
+
+  if (config_.temperature <= 0.0F) {
+    llama_sampler_chain_add(sampler.get(), llama_sampler_init_greedy());
+  } else {
+    if (config_.top_k > 0) {
+      llama_sampler_chain_add(sampler.get(), llama_sampler_init_top_k(config_.top_k));
+    }
+    if (config_.top_p > 0.0F && config_.top_p <= 1.0F) {
+      llama_sampler_chain_add(sampler.get(), llama_sampler_init_top_p(config_.top_p, 1));
+    }
+    llama_sampler_chain_add(sampler.get(), llama_sampler_init_temp(config_.temperature));
+    llama_sampler_chain_add(sampler.get(), llama_sampler_init_dist(config_.seed));
+  }
+
+  llama_batch batch = llama_batch_get_one(prompt_tokens.data(), static_cast<int32_t>(prompt_tokens.size()));
+
+  if (llama_model_has_encoder(model_)) {
+    if (llama_encode(ctx.get(), batch) != 0) {
+      throw std::runtime_error("llama_encode failed.");
+    }
+    llama_token decoder_start = llama_model_decoder_start_token(model_);
+    if (decoder_start == LLAMA_TOKEN_NULL) {
+      decoder_start = llama_vocab_bos(vocab_);
+    }
+    batch = llama_batch_get_one(&decoder_start, 1);
+  }
+
+  std::string output;
+  output.reserve(1024);
+
+  for (int generated = 0; generated < generation_limit; ++generated) {
+    if (llama_decode(ctx.get(), batch) != 0) {
+      throw std::runtime_error("llama_decode failed.");
+    }
+
+    llama_token token = llama_sampler_sample(sampler.get(), ctx.get(), -1);
+    if (llama_vocab_is_eog(vocab_, token)) {
+      break;
+    }
+
+    char piece[256];
+    const int n = llama_token_to_piece(vocab_, token, piece, sizeof(piece), 0, true);
+    if (n < 0) {
+      throw std::runtime_error("llama_token_to_piece failed.");
+    }
+    output.append(piece, piece + n);
+
+    llama_sampler_accept(sampler.get(), token);
+    batch = llama_batch_get_one(&token, 1);
+  }
+
+  return output;
+}
+
+}  // namespace rag
