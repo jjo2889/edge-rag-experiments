@@ -46,7 +46,10 @@ endif()
 
 find_library(LLAMA_LIBRARY
   NAMES llama
-  PATHS "${LLAMA_CPP_ROOT}/build/bin"
+  PATHS
+    "${LLAMA_CPP_ROOT}/build/bin"
+    "${LLAMA_CPP_ROOT}/build/src"
+    "${LLAMA_CPP_ROOT}/build"
   NO_DEFAULT_PATH
   REQUIRED)
 
@@ -82,7 +85,7 @@ target_link_libraries(rag_core
     ${LLAMA_LIBRARY})
 
 set(RAG_LOCAL_RPATH
-  "${LLAMA_CPP_ROOT}/build/bin;${ONNXRUNTIME_ROOT}/lib;${ONNXRUNTIME_ROOT}/lib64")
+  "${LLAMA_CPP_ROOT}/build/bin;${LLAMA_CPP_ROOT}/build/src;${ONNXRUNTIME_ROOT}/lib;${ONNXRUNTIME_ROOT}/lib64")
 
 add_executable(rag_ingest apps/ingest_main.cpp)
 target_link_libraries(rag_ingest PRIVATE rag_core)

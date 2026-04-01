@@ -19,5 +19,8 @@ cmake -S "${LLAMA_DIR}" -B "${BUILD_DIR}" \
 cmake --build "${BUILD_DIR}" -j"$(nproc)"
 
 echo "[done] llama.cpp rebuild complete"
-echo "[hint] run: source ${ROOT_DIR}/scripts/activate_env.sh"
-echo "[hint] check: ${BUILD_DIR}/bin/llama-cli --version"
+echo "[hint] quick check (optional): ${BUILD_DIR}/bin/llama-cli --version"
+echo "[next] continue setup flow:"
+echo "       - prepare embedding model: scripts/setup_embedding_model.sh (or place model files manually)"
+echo "       - prepare data: scripts/setup_scifact_data.sh (or place files under data/raw)"
+echo "       - then run: source ${ROOT_DIR}/scripts/activate_env.sh && ${ROOT_DIR}/scripts/check_env.sh"

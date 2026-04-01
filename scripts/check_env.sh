@@ -28,20 +28,38 @@ need_file() {
   echo "[ok] path: $1"
 }
 
+need_dir() {
+  if [ ! -d "$1" ]; then
+    echo "[fail] missing directory: $1"
+    exit 1
+  fi
+  echo "[ok] directory: $1"
+}
+
 need_cmd cmake
 need_cmd g++
 need_cmd python3
+need_cmd find
 
 need_file "${ROOT_DIR}/models/gemma/gemma-3-270m-it-Q4_K_S.gguf"
 need_file "${ROOT_DIR}/models/all-MiniLM-L6-v2-onnx/model.onnx"
+need_file "${ROOT_DIR}/models/all-MiniLM-L6-v2-onnx/tokenizer.json"
 need_file "${ONNXRUNTIME_ROOT}/lib/libonnxruntime.so"
 
-LLAMA_LIB_PATH="$(find "${LLAMA_CPP_ROOT}/build/bin" -maxdepth 1 -type f -name 'libllama.so*' | sort | head -n 1 || true)"
+LLAMA_LIB_PATH="$(find "${LLAMA_CPP_ROOT}/build" -maxdepth 3 -type f -name 'libllama.so*' | sort | head -n 1 || true)"
 if [ -z "${LLAMA_LIB_PATH}" ]; then
-  echo "[fail] missing llama shared lib under ${LLAMA_CPP_ROOT}/build/bin"
+  echo "[fail] missing llama shared lib under ${LLAMA_CPP_ROOT}/build"
   exit 1
 fi
 echo "[ok] path: ${LLAMA_LIB_PATH}"
+
+need_dir "${ROOT_DIR}/data/raw"
+TEXT_FILE_COUNT="$(find "${ROOT_DIR}/data/raw" -type f \( -name '*.txt' -o -name '*.md' -o -name '*.jsonl' \) | wc -l | tr -d ' ')"
+if [ "${TEXT_FILE_COUNT}" -eq 0 ]; then
+  echo "[fail] no ingestible files (.txt/.md/.jsonl) under ${ROOT_DIR}/data/raw"
+  exit 1
+fi
+echo "[ok] ingestible files under data/raw: ${TEXT_FILE_COUNT}"
 
 FAISS_STATIC_LIB="$(find "${FAISS_ROOT}" -type f -name 'libfaiss.a' 2>/dev/null | sort | head -n 1 || true)"
 if [ -n "${FAISS_STATIC_LIB}" ]; then
@@ -88,5 +106,21 @@ CPP
 cmake -S "${TMP_FAISS}" -B "${TMP_FAISS}/build" -DCMAKE_PREFIX_PATH="${CMAKE_HINTS}" >/dev/null
 cmake --build "${TMP_FAISS}/build" -j >/dev/null
 echo "[ok] faiss CMake package + link test"
+
+echo "[check] testing header: nlohmann/json.hpp (system or llama.cpp vendor)"
+TMP_JSON="$(mktemp -d)"
+cat > "${TMP_JSON}/main.cpp" <<'CPP'
+#include <nlohmann/json.hpp>
+int main() { nlohmann::json j; j["ok"] = true; return 0; }
+CPP
+JSON_INCLUDE_FLAGS=()
+if [ -f "${LLAMA_CPP_ROOT}/vendor/nlohmann/json.hpp" ]; then
+  JSON_INCLUDE_FLAGS=(-I"${LLAMA_CPP_ROOT}/vendor")
+  echo "[info] using vendored header: ${LLAMA_CPP_ROOT}/vendor/nlohmann/json.hpp"
+else
+  echo "[info] vendored nlohmann not found; trying system include path"
+fi
+g++ -std=c++17 "${JSON_INCLUDE_FLAGS[@]}" "${TMP_JSON}/main.cpp" -o "${TMP_JSON}/check_json" >/dev/null
+echo "[ok] nlohmann/json.hpp"
 
 echo "[done] environment check passed"

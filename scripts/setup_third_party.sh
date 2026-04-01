@@ -10,6 +10,18 @@ ORT_VERSION="${ORT_VERSION:-1.24.3}"
 ORT_ARCHIVE="onnxruntime-linux-x64-${ORT_VERSION}.tgz"
 ORT_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/${ORT_ARCHIVE}"
 ORT_DIR="${THIRD_PARTY_DIR}/onnxruntime-linux-x64-${ORT_VERSION}"
+ORT_SHA256="${ORT_SHA256:-}"
+
+need_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "[fail] missing command: $1"
+    exit 1
+  fi
+}
+
+need_cmd git
+need_cmd curl
+need_cmd tar
 
 mkdir -p "${THIRD_PARTY_DIR}"
 
@@ -27,7 +39,15 @@ git -C "${LLAMA_DIR}" checkout "${LLAMA_REF}"
 echo "[setup] onnxruntime ${ORT_VERSION}"
 if [ ! -d "${ORT_DIR}" ]; then
   TMP_DIR="$(mktemp -d)"
-  curl -fL "${ORT_URL}" -o "${TMP_DIR}/${ORT_ARCHIVE}"
+  ORT_ARCHIVE_PATH="${TMP_DIR}/${ORT_ARCHIVE}"
+  curl -fL "${ORT_URL}" -o "${ORT_ARCHIVE_PATH}"
+  if [ -n "${ORT_SHA256}" ]; then
+    need_cmd sha256sum
+    echo "${ORT_SHA256}  ${ORT_ARCHIVE_PATH}" | sha256sum -c -
+    echo "[ok] checksum verified: ${ORT_ARCHIVE}"
+  else
+    echo "[warn] ORT_SHA256 is empty; checksum verification skipped"
+  fi
   tar -xzf "${TMP_DIR}/${ORT_ARCHIVE}" -C "${THIRD_PARTY_DIR}"
   rm -rf "${TMP_DIR}"
 else
