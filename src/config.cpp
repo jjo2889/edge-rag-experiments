@@ -24,10 +24,18 @@ T readRequired(const YAML::Node& node, const char* key) {
   return node[key].as<T>();
 }
 
+void rejectUnsupportedModelConfigKeys(const YAML::Node& node) {
+  if (node["max_tokens"]) {
+    throw std::runtime_error(
+        "Unsupported config key: max_tokens. This project only supports max_new_tokens for generation length control.");
+  }
+}
+
 }  // namespace
 
 ModelConfig ConfigLoader::loadModelConfig(const std::string& path) {
   const YAML::Node root = YAML::LoadFile(path);
+  rejectUnsupportedModelConfigKeys(root);
 
   ModelConfig cfg;
   cfg.llama_model_path = readRequired<std::string>(root, "llama_model_path");

@@ -7,6 +7,11 @@ C++ 기반 최소 RAG 파이프라인 (`llama.cpp + ONNX 임베딩 + FAISS`)
 - 환경 설정: `docs/SETUP.md`
 - 형상관리 기준: `docs/VERSION_CONTROL.md`
 
+## 생성 길이 설정 정책
+
+- 모델 설정 키는 `max_new_tokens`만 지원
+- `max_tokens`는 지원하지 않으며, 설정 시 실행 초기에 오류로 종료됨
+
 ## 빠른 시작 (fresh clone)
 
 이 저장소는 재현성을 위해 대용량/외부 산출물을 Git에서 제외한다.

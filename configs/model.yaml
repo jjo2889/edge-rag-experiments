@@ -8,6 +8,9 @@ n_ctx: 2048
 n_batch: 512
 n_threads: 4
 
+# Generation length policy:
+# - Supported key: max_new_tokens
+# - Unsupported key: max_tokens (startup error)
 max_new_tokens: 32
 temperature: 0.2
 top_k: 40

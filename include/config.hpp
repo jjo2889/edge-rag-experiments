@@ -15,6 +15,7 @@ struct ModelConfig {
   int n_batch = 512;
   int n_threads = 4;
 
+  // Generation length control key in YAML: max_new_tokens (max_tokens is unsupported).
   int max_new_tokens = 160;
   float temperature = 0.2F;
   int top_k = 40;
