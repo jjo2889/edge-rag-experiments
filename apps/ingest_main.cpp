@@ -1,3 +1,4 @@
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -47,6 +48,7 @@ std::vector<rag::Chunk> saveChunkStore(const std::vector<rag::Chunk>& chunks, co
 
 int main(int argc, char** argv) {
   try {
+    const auto ingest_start = std::chrono::steady_clock::now();
     std::string model_config_path = "configs/model.yaml";
     std::string retrieval_config_path = "configs/retrieval.yaml";
 
@@ -87,12 +89,14 @@ int main(int argc, char** argv) {
     std::vector<std::vector<float>> embeddings;
     embeddings.reserve(chunks.size());
 
+    const auto embed_start = std::chrono::steady_clock::now();
     for (size_t i = 0; i < chunks.size(); ++i) {
       embeddings.push_back(embedding_model.embed(chunks[i].text));
       if ((i + 1) % 50 == 0 || i + 1 == chunks.size()) {
         std::cout << "[ingest] embedded " << (i + 1) << "/" << chunks.size() << '\r' << std::flush;
       }
     }
+    const auto embed_end = std::chrono::steady_clock::now();
     std::cout << '\n';
 
     rag::FaissIndex index;
@@ -103,6 +107,12 @@ int main(int argc, char** argv) {
     saveChunkStore(chunks, retrieval_cfg.chunk_store_path);
     std::cout << "[ingest] chunk store saved: " << retrieval_cfg.chunk_store_path << '\n';
     std::cout << "[ingest] done.\n";
+
+    const auto ingest_end = std::chrono::steady_clock::now();
+    const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(ingest_end - ingest_start).count();
+    const auto embed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(embed_end - embed_start).count();
+    std::cout << "[metric][ingest] total_ms=" << total_ms << " embed_ms=" << embed_ms << " chunks=" << chunks.size()
+              << '\n';
 
     return 0;
   } catch (const std::exception& e) {
