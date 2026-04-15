@@ -12,6 +12,11 @@ C++ 기반 최소 RAG 파이프라인 (`llama.cpp + ONNX 임베딩 + FAISS`)
 - 모델 설정 키는 `max_new_tokens`만 지원
 - `max_tokens`는 지원하지 않으며, 설정 시 실행 초기에 오류로 종료됨
 
+## 프롬프트 설정 정책
+
+- 시스템 프롬프트는 `configs/prompt_system.txt`에서 로드
+- `configs/model.yaml`의 `prompt_system_path`로 경로를 고정/관리
+
 ## 빠른 시작 (fresh clone)
 
 이 저장소는 재현성을 위해 대용량/외부 산출물을 Git에서 제외한다.

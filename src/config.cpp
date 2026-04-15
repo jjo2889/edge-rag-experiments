@@ -41,6 +41,7 @@ ModelConfig ConfigLoader::loadModelConfig(const std::string& path) {
   cfg.llama_model_path = readRequired<std::string>(root, "llama_model_path");
   cfg.onnx_model_path = readRequired<std::string>(root, "onnx_model_path");
   cfg.tokenizer_json_path = readRequired<std::string>(root, "tokenizer_json_path");
+  cfg.prompt_system_path = readOrDefault<std::string>(root, "prompt_system_path", cfg.prompt_system_path);
 
   cfg.n_gpu_layers = readOrDefault<int>(root, "n_gpu_layers", cfg.n_gpu_layers);
   cfg.n_ctx = readOrDefault<int>(root, "n_ctx", cfg.n_ctx);

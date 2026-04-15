@@ -1,4 +1,5 @@
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -46,6 +47,18 @@ std::vector<rag::Chunk> loadChunkStore(const std::string& path) {
 void runSingleQuery(const rag::RagPipeline& pipeline, const std::string& question) {
   const rag::RagResult result = pipeline.run(question);
 
+  std::cerr << "[trace] original_query=" << result.original_query << '\n';
+  std::cerr << "[trace] retrieval_query=" << result.retrieval_query << '\n';
+  std::cerr << "[trace] prompt_tokens_before_truncation=" << result.prompt_tokens_before_truncation << '\n';
+  std::cerr << "[trace] prompt_tokens_used=" << result.prompt_tokens << '\n';
+  std::cerr << "[trace] prompt_truncated=" << (result.prompt_truncated ? "true" : "false") << '\n';
+  std::cerr << "[trace] output_tokens=" << result.output_tokens << '\n';
+  std::cerr << "[trace] retrieve_ms=" << result.retrieve_ms << '\n';
+  std::cerr << "[trace] generate_ms=" << result.generate_ms << '\n';
+  std::cerr << "[trace] total_ms=" << result.total_ms << '\n';
+  std::cerr << "[trace] output_tokens_per_sec=" << std::fixed << std::setprecision(2) << result.output_tokens_per_sec
+            << '\n';
+
   std::cout << "\n=== Retrieved Contexts ===\n";
   for (size_t i = 0; i < result.contexts.size(); ++i) {
     const auto& c = result.contexts[i];
@@ -83,6 +96,9 @@ int main(int argc, char** argv) {
 
     const rag::ModelConfig model_cfg = rag::ConfigLoader::loadModelConfig(model_config_path);
     const rag::RetrievalConfig retrieval_cfg = rag::ConfigLoader::loadRetrievalConfig(retrieval_config_path);
+    std::cerr << "[trace] model_config_path=" << model_config_path << '\n';
+    std::cerr << "[trace] retrieval_config_path=" << retrieval_config_path << '\n';
+    std::cerr << "[trace] prompt_system_path=" << model_cfg.prompt_system_path << '\n';
 
     std::vector<rag::Chunk> chunks = loadChunkStore(retrieval_cfg.chunk_store_path);
     rag::FaissIndex index = rag::FaissIndex::load(retrieval_cfg.index_path);

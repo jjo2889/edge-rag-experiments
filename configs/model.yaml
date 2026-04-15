@@ -1,6 +1,7 @@
 llama_model_path: "models/gemma/gemma-3-270m-it-Q4_K_S.gguf"
 onnx_model_path: "models/all-MiniLM-L6-v2-onnx/model.onnx"
 tokenizer_json_path: "models/all-MiniLM-L6-v2-onnx/tokenizer.json"
+prompt_system_path: "configs/prompt_system.txt"
 
 # Raspberry Pi target 기준 기본값: CPU-only
 n_gpu_layers: 0

@@ -9,6 +9,7 @@ struct ModelConfig {
   std::string llama_model_path;
   std::string onnx_model_path;
   std::string tokenizer_json_path;
+  std::string prompt_system_path = "configs/prompt_system.txt";
 
   int n_gpu_layers = 0;
   int n_ctx = 2048;

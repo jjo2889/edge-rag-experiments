@@ -1,7 +1,9 @@
 #include "generator.hpp"
 
 #include <algorithm>
+#include <fstream>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -30,11 +32,27 @@ struct SamplerDeleter {
   }
 };
 
+std::string loadTextFile(const std::string& path) {
+  std::ifstream in(path);
+  if (!in) {
+    throw std::runtime_error("Failed to open system prompt file: " + path);
+  }
+
+  std::ostringstream oss;
+  oss << in.rdbuf();
+  const std::string text = oss.str();
+  if (text.empty()) {
+    throw std::runtime_error("System prompt file is empty: " + path);
+  }
+  return text;
+}
+
 }  // namespace
 
-Generator::Generator(ModelConfig config) : config_(std::move(config)), model_(nullptr), vocab_(nullptr) {
+Generator::Generator(ModelConfig config) : config_(std::move(config)), model_(nullptr), vocab_(nullptr), system_prompt_() {
   llama_log_set(silentLlamaLog, nullptr);
   llama_backend_init();
+  system_prompt_ = loadTextFile(config_.prompt_system_path);
 
   llama_model_params model_params = llama_model_default_params();
   model_params.n_gpu_layers = config_.n_gpu_layers;
@@ -57,20 +75,44 @@ Generator::~Generator() {
   }
 }
 
-std::string Generator::generate(const std::string& prompt) const {
+std::string Generator::buildFinalPrompt(const std::string& prompt_body) const {
+  if (system_prompt_.empty()) {
+    return prompt_body;
+  }
+
+  std::string final_prompt = system_prompt_;
+  if (!final_prompt.empty() && final_prompt.back() != '\n') {
+    final_prompt.push_back('\n');
+  }
+  final_prompt.push_back('\n');
+  final_prompt.append(prompt_body);
+  return final_prompt;
+}
+
+std::string Generator::generate(const std::string& prompt_body) const {
+  return generateWithTrace(prompt_body).output_text;
+}
+
+GenerationTrace Generator::generateWithTrace(const std::string& prompt_body) const {
   if (model_ == nullptr || vocab_ == nullptr) {
     throw std::runtime_error("Generator model is not initialized.");
   }
 
-  const int n_prompt = -llama_tokenize(vocab_, prompt.c_str(), static_cast<int32_t>(prompt.size()), nullptr, 0, true, true);
+  GenerationTrace trace;
+  trace.prompt_body = prompt_body;
+  trace.final_prompt = buildFinalPrompt(prompt_body);
+
+  const int n_prompt =
+      -llama_tokenize(vocab_, trace.final_prompt.c_str(), static_cast<int32_t>(trace.final_prompt.size()), nullptr, 0, true, true);
   if (n_prompt <= 0) {
     throw std::runtime_error("Failed to tokenize prompt.");
   }
+  trace.prompt_tokens_before_truncation = n_prompt;
 
   std::vector<llama_token> prompt_tokens(static_cast<size_t>(n_prompt));
   if (llama_tokenize(vocab_,
-                     prompt.c_str(),
-                     static_cast<int32_t>(prompt.size()),
+                     trace.final_prompt.c_str(),
+                     static_cast<int32_t>(trace.final_prompt.size()),
                      prompt_tokens.data(),
                      static_cast<int32_t>(prompt_tokens.size()),
                      true,
@@ -82,8 +124,10 @@ std::string Generator::generate(const std::string& prompt) const {
   const int generation_limit = std::max(1, config_.max_new_tokens);
   const int max_prompt_tokens = std::max(16, context_limit - generation_limit);
   if (static_cast<int>(prompt_tokens.size()) > max_prompt_tokens) {
+    trace.prompt_truncated = true;
     prompt_tokens.erase(prompt_tokens.begin(), prompt_tokens.end() - max_prompt_tokens);
   }
+  trace.prompt_tokens = static_cast<int>(prompt_tokens.size());
 
   llama_context_params ctx_params = llama_context_default_params();
   ctx_params.n_ctx = static_cast<uint32_t>(context_limit);
@@ -130,8 +174,8 @@ std::string Generator::generate(const std::string& prompt) const {
     batch = llama_batch_get_one(&decoder_start, 1);
   }
 
-  std::string output;
-  output.reserve(1024);
+  trace.output_text.reserve(1024);
+  int output_tokens = 0;
 
   for (int generated = 0; generated < generation_limit; ++generated) {
     if (llama_decode(ctx.get(), batch) != 0) {
@@ -148,13 +192,15 @@ std::string Generator::generate(const std::string& prompt) const {
     if (n < 0) {
       throw std::runtime_error("llama_token_to_piece failed.");
     }
-    output.append(piece, piece + n);
+    trace.output_text.append(piece, piece + n);
+    ++output_tokens;
 
     llama_sampler_accept(sampler.get(), token);
     batch = llama_batch_get_one(&token, 1);
   }
+  trace.output_tokens = output_tokens;
 
-  return output;
+  return trace;
 }
 
 }  // namespace rag
