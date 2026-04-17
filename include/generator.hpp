@@ -1,9 +1,11 @@
 #pragma once
 
+#include <mutex>
 #include <string>
 
 #include "config.hpp"
 
+struct llama_context;
 struct llama_model;
 struct llama_vocab;
 
@@ -32,11 +34,17 @@ class Generator {
 
  private:
   std::string buildFinalPrompt(const std::string& prompt_body) const;
+  int computeRequiredBatchSize(int prompt_token_count) const;
+  void recreateContextLocked(int requested_n_batch) const;
 
   ModelConfig config_;
   llama_model* model_;
   const llama_vocab* vocab_;
   std::string system_prompt_;
+  int context_limit_;
+  mutable int ctx_n_batch_;
+  mutable llama_context* ctx_;
+  mutable std::mutex ctx_mutex_;
 };
 
 }  // namespace rag

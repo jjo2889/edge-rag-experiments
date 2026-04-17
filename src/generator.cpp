@@ -16,14 +16,6 @@ namespace {
 
 void silentLlamaLog(enum ggml_log_level /* level */, const char* /* text */, void* /* user_data */) {}
 
-struct ContextDeleter {
-  void operator()(llama_context* ctx) const {
-    if (ctx != nullptr) {
-      llama_free(ctx);
-    }
-  }
-};
-
 struct SamplerDeleter {
   void operator()(llama_sampler* sampler) const {
     if (sampler != nullptr) {
@@ -49,7 +41,15 @@ std::string loadTextFile(const std::string& path) {
 
 }  // namespace
 
-Generator::Generator(ModelConfig config) : config_(std::move(config)), model_(nullptr), vocab_(nullptr), system_prompt_() {
+Generator::Generator(ModelConfig config)
+    : config_(std::move(config)),
+      model_(nullptr),
+      vocab_(nullptr),
+      system_prompt_(),
+      context_limit_(std::max(128, config_.n_ctx)),
+      ctx_n_batch_(0),
+      ctx_(nullptr),
+      ctx_mutex_() {
   llama_log_set(silentLlamaLog, nullptr);
   llama_backend_init();
   system_prompt_ = loadTextFile(config_.prompt_system_path);
@@ -66,9 +66,21 @@ Generator::Generator(ModelConfig config) : config_(std::move(config)), model_(nu
   if (vocab_ == nullptr) {
     throw std::runtime_error("Failed to get model vocabulary.");
   }
+
+  const int initial_n_batch = std::max(1, std::min(context_limit_, config_.n_batch));
+  recreateContextLocked(initial_n_batch);
 }
 
 Generator::~Generator() {
+  {
+    std::lock_guard<std::mutex> lock(ctx_mutex_);
+    if (ctx_ != nullptr) {
+      llama_free(ctx_);
+      ctx_ = nullptr;
+      ctx_n_batch_ = 0;
+    }
+  }
+
   if (model_ != nullptr) {
     llama_model_free(model_);
     model_ = nullptr;
@@ -91,6 +103,32 @@ std::string Generator::buildFinalPrompt(const std::string& prompt_body) const {
 
 std::string Generator::generate(const std::string& prompt_body) const {
   return generateWithTrace(prompt_body).output_text;
+}
+
+int Generator::computeRequiredBatchSize(const int prompt_token_count) const {
+  return std::max(1, std::min(context_limit_, std::max(config_.n_batch, prompt_token_count)));
+}
+
+void Generator::recreateContextLocked(const int requested_n_batch) const {
+  const int safe_n_batch = std::max(1, std::min(context_limit_, requested_n_batch));
+
+  if (ctx_ != nullptr) {
+    llama_free(ctx_);
+    ctx_ = nullptr;
+  }
+
+  llama_context_params ctx_params = llama_context_default_params();
+  ctx_params.n_ctx = static_cast<uint32_t>(context_limit_);
+  ctx_params.n_batch = static_cast<uint32_t>(safe_n_batch);
+  ctx_params.n_threads = std::max(1, config_.n_threads);
+  ctx_params.n_threads_batch = std::max(1, config_.n_threads);
+  ctx_params.no_perf = false;
+
+  ctx_ = llama_init_from_model(model_, ctx_params);
+  if (ctx_ == nullptr) {
+    throw std::runtime_error("Failed to create llama context.");
+  }
+  ctx_n_batch_ = safe_n_batch;
 }
 
 GenerationTrace Generator::generateWithTrace(const std::string& prompt_body) const {
@@ -120,27 +158,14 @@ GenerationTrace Generator::generateWithTrace(const std::string& prompt_body) con
     throw std::runtime_error("Failed to tokenize prompt into token buffer.");
   }
 
-  const int context_limit = std::max(128, config_.n_ctx);
   const int generation_limit = std::max(1, config_.max_new_tokens);
-  const int max_prompt_tokens = std::max(16, context_limit - generation_limit);
+  const int max_prompt_tokens = std::max(16, context_limit_ - generation_limit);
   if (static_cast<int>(prompt_tokens.size()) > max_prompt_tokens) {
     trace.prompt_truncated = true;
     prompt_tokens.erase(prompt_tokens.begin(), prompt_tokens.end() - max_prompt_tokens);
   }
   trace.prompt_tokens = static_cast<int>(prompt_tokens.size());
-
-  llama_context_params ctx_params = llama_context_default_params();
-  ctx_params.n_ctx = static_cast<uint32_t>(context_limit);
-  ctx_params.n_batch =
-      static_cast<uint32_t>(std::min(context_limit, std::max(config_.n_batch, static_cast<int>(prompt_tokens.size()))));
-  ctx_params.n_threads = std::max(1, config_.n_threads);
-  ctx_params.n_threads_batch = std::max(1, config_.n_threads);
-  ctx_params.no_perf = false;
-
-  std::unique_ptr<llama_context, ContextDeleter> ctx(llama_init_from_model(model_, ctx_params));
-  if (!ctx) {
-    throw std::runtime_error("Failed to create llama context.");
-  }
+  const int required_n_batch = computeRequiredBatchSize(static_cast<int>(prompt_tokens.size()));
 
   auto sampler_params = llama_sampler_chain_default_params();
   std::unique_ptr<llama_sampler, SamplerDeleter> sampler(llama_sampler_chain_init(sampler_params));
@@ -161,10 +186,16 @@ GenerationTrace Generator::generateWithTrace(const std::string& prompt_body) con
     llama_sampler_chain_add(sampler.get(), llama_sampler_init_dist(config_.seed));
   }
 
+  std::lock_guard<std::mutex> lock(ctx_mutex_);
+  if (ctx_ == nullptr || required_n_batch > ctx_n_batch_) {
+    recreateContextLocked(required_n_batch);
+  }
+  llama_memory_clear(llama_get_memory(ctx_), false);
+
   llama_batch batch = llama_batch_get_one(prompt_tokens.data(), static_cast<int32_t>(prompt_tokens.size()));
 
   if (llama_model_has_encoder(model_)) {
-    if (llama_encode(ctx.get(), batch) != 0) {
+    if (llama_encode(ctx_, batch) != 0) {
       throw std::runtime_error("llama_encode failed.");
     }
     llama_token decoder_start = llama_model_decoder_start_token(model_);
@@ -178,11 +209,11 @@ GenerationTrace Generator::generateWithTrace(const std::string& prompt_body) con
   int output_tokens = 0;
 
   for (int generated = 0; generated < generation_limit; ++generated) {
-    if (llama_decode(ctx.get(), batch) != 0) {
+    if (llama_decode(ctx_, batch) != 0) {
       throw std::runtime_error("llama_decode failed.");
     }
 
-    llama_token token = llama_sampler_sample(sampler.get(), ctx.get(), -1);
+    llama_token token = llama_sampler_sample(sampler.get(), ctx_, -1);
     if (llama_vocab_is_eog(vocab_, token)) {
       break;
     }
