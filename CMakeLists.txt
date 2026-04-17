@@ -62,7 +62,8 @@ set(RAG_CORE_SOURCES
   src/retriever.cpp
   src/prompt_builder.cpp
   src/generator.cpp
-  src/rag_pipeline.cpp)
+  src/rag_pipeline.cpp
+  src/scifact_export.cpp)
 
 add_library(rag_core ${RAG_CORE_SOURCES})
 

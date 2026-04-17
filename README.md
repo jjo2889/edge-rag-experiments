@@ -17,6 +17,33 @@ C++ 기반 최소 RAG 파이프라인 (`llama.cpp + ONNX 임베딩 + FAISS`)
 - 시스템 프롬프트는 `configs/prompt_system.txt`에서 로드
 - `configs/model.yaml`의 `prompt_system_path`로 경로를 고정/관리
 
+## Query 실행 모드
+
+- 단일 질의:
+  - `./build/rag_query --model_config ... --retrieval_config ... --question "..."`
+- 배치 JSONL export (RAGAS 입력용):
+  - `./build/rag_query --model_config ... --retrieval_config ... --questions ... --qrels ... --corpus ... --output_jsonl ... [--limit N]`
+- `--question`과 `--output_jsonl` 배치 모드는 동시에 사용할 수 없음
+
+SciFact 배치 export 예시:
+
+```bash
+./build/rag_query \
+  --model_config configs/model.yaml \
+  --retrieval_config configs/retrieval_scifact.yaml \
+  --questions data/beir/scifact/queries.jsonl \
+  --qrels data/beir/scifact/qrels/test.tsv \
+  --corpus data/beir/scifact/corpus.jsonl \
+  --output_jsonl results/runs/scifact_naive_rag/predictions.jsonl \
+  --limit 5
+```
+
+Reference 생성 정책(배치 export):
+
+- `qrels(test)`의 positive `corpus-id` 문서만 사용
+- 각 문서는 `title + "\n" + text`로 구성
+- 여러 문서는 `"\n\n"`로 연결
+
 ## 빠른 시작 (fresh clone)
 
 이 저장소는 재현성을 위해 대용량/외부 산출물을 Git에서 제외한다.

@@ -8,6 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "app_cli.hpp"
 #include "config.hpp"
 #include "document_loader.hpp"
 #include "embedding_model.hpp"
@@ -49,15 +50,12 @@ std::vector<rag::Chunk> saveChunkStore(const std::vector<rag::Chunk>& chunks, co
 int main(int argc, char** argv) {
   try {
     const auto ingest_start = std::chrono::steady_clock::now();
-    std::string model_config_path = "configs/model.yaml";
-    std::string retrieval_config_path = "configs/retrieval.yaml";
+    rag::app::CommonCliOptions cli_options;
 
     for (int i = 1; i < argc; ++i) {
       const std::string arg = argv[i];
-      if (arg == "--model_config" && i + 1 < argc) {
-        model_config_path = argv[++i];
-      } else if (arg == "--retrieval_config" && i + 1 < argc) {
-        retrieval_config_path = argv[++i];
+      if (rag::app::tryParseCommonConfigArg(arg, argc, argv, i, cli_options)) {
+        continue;
       } else if (arg == "--help" || arg == "-h") {
         printUsage();
         return 0;
@@ -66,8 +64,8 @@ int main(int argc, char** argv) {
       }
     }
 
-    const rag::ModelConfig model_cfg = rag::ConfigLoader::loadModelConfig(model_config_path);
-    const rag::RetrievalConfig retrieval_cfg = rag::ConfigLoader::loadRetrievalConfig(retrieval_config_path);
+    const rag::ModelConfig model_cfg = rag::ConfigLoader::loadModelConfig(cli_options.model_config_path);
+    const rag::RetrievalConfig retrieval_cfg = rag::ConfigLoader::loadRetrievalConfig(cli_options.retrieval_config_path);
 
     std::cout << "[ingest] loading documents from: " << retrieval_cfg.data_dir << '\n';
     rag::DocumentLoader loader;
