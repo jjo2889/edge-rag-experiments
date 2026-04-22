@@ -1,6 +1,6 @@
 #include <fstream>
-#include <iomanip>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -13,6 +13,8 @@
 #include "faiss_index.hpp"
 #include "generator.hpp"
 #include "prompt_builder.hpp"
+#include "query_request_io.hpp"
+#include "query_response_json.hpp"
 #include "rag_pipeline.hpp"
 #include "retriever.hpp"
 #include "scifact_export.hpp"
@@ -23,12 +25,14 @@ namespace {
 struct QueryCliOptions {
   rag::app::CommonCliOptions common;
   std::string question;
+  std::string request_json_path;
   rag::ScifactExportOptions scifact_export;
   bool show_help = false;
 };
 
 void printUsage() {
-  std::cout << "Usage: rag_query [--model_config path] [--retrieval_config path] [--question \"...\"]\n";
+  std::cout << "Usage: rag_query [--model_config path] [--retrieval_config path] --request_json path\n";
+  std::cout << "       rag_query [--model_config path] [--retrieval_config path] --question \"...\"\n";
   std::cout << "       rag_query --questions path --qrels path --corpus path --output_jsonl path [--limit N]\n";
 }
 
@@ -68,6 +72,11 @@ QueryCliOptions parseQueryCliOptions(int argc, char** argv) {
         throw std::runtime_error("Missing value for --question");
       }
       options.question = argv[++i];
+    } else if (arg == "--request_json") {
+      if (i + 1 >= argc) {
+        throw std::runtime_error("Missing value for --request_json");
+      }
+      options.request_json_path = argv[++i];
     } else if (arg == "--questions") {
       if (i + 1 >= argc) {
         throw std::runtime_error("Missing value for --questions");
@@ -116,62 +125,25 @@ void validateQueryCliOptions(const QueryCliOptions& options) {
         options.scifact_export.corpus_path.empty()) {
       throw std::runtime_error("Batch JSONL mode requires --questions, --qrels, --corpus, and --output_jsonl.");
     }
-    if (!options.question.empty()) {
-      throw std::runtime_error("Use either --question or --output_jsonl batch mode, not both.");
+    if (!options.question.empty() || !options.request_json_path.empty()) {
+      throw std::runtime_error("Batch JSONL mode cannot be combined with --question or --request_json.");
     }
-  }
-}
-
-void printSingleQueryTrace(const rag::RagResult& result) {
-  std::cerr << "[trace] original_query=" << result.original_query << '\n';
-  std::cerr << "[trace] retrieval_query=" << result.retrieval_query << '\n';
-  std::cerr << "[trace] prompt_tokens_before_truncation=" << result.prompt_tokens_before_truncation << '\n';
-  std::cerr << "[trace] prompt_tokens_used=" << result.prompt_tokens << '\n';
-  std::cerr << "[trace] prompt_truncated=" << (result.prompt_truncated ? "true" : "false") << '\n';
-  std::cerr << "[trace] output_tokens=" << result.output_tokens << '\n';
-  std::cerr << "[trace] retrieve_ms=" << result.retrieve_ms << '\n';
-  std::cerr << "[trace] generate_ms=" << result.generate_ms << '\n';
-  std::cerr << "[trace] total_ms=" << result.total_ms << '\n';
-  std::cerr << "[trace] output_tokens_per_sec=" << std::fixed << std::setprecision(2) << result.output_tokens_per_sec
-            << '\n';
-}
-
-void runSingleQuery(const rag::RagPipeline& pipeline, const std::string& question) {
-  const rag::RagResult result = pipeline.run(question);
-  printSingleQueryTrace(result);
-
-  std::cout << "\n=== Retrieved Contexts ===\n";
-  for (size_t i = 0; i < result.contexts.size(); ++i) {
-    const auto& c = result.contexts[i];
-    std::cout << "[" << i + 1 << "] doc=" << c.chunk.doc_id << " score=" << c.score << '\n';
-    std::cout << c.chunk.text << "\n\n";
+    return;
   }
 
-  std::cout << "=== Answer ===\n";
-  std::cout << result.answer << "\n\n";
-}
-
-void runInteractive(const rag::RagPipeline& pipeline) {
-  std::cout << "Interactive mode. Type 'exit' to quit.\n";
-  while (true) {
-    std::cout << "\nquestion> " << std::flush;
-    std::string line;
-    if (!std::getline(std::cin, line)) {
-      break;
-    }
-    if (line == "exit" || line == "quit") {
-      break;
-    }
-    if (line.empty()) {
-      continue;
-    }
-    runSingleQuery(pipeline, line);
+  if (!options.question.empty() && !options.request_json_path.empty()) {
+    throw std::runtime_error("Use either --question or --request_json, not both.");
+  }
+  if (options.question.empty() && options.request_json_path.empty()) {
+    throw std::runtime_error("Single query mode requires --request_json or --question.");
   }
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
+  std::optional<rag::query::QueryRequest> request_for_error;
+
   try {
     const QueryCliOptions cli = parseQueryCliOptions(argc, argv);
     if (cli.show_help) {
@@ -180,11 +152,21 @@ int main(int argc, char** argv) {
     }
     validateQueryCliOptions(cli);
 
-    const rag::ModelConfig model_cfg = rag::ConfigLoader::loadModelConfig(cli.common.model_config_path);
-    const rag::RetrievalConfig retrieval_cfg = rag::ConfigLoader::loadRetrievalConfig(cli.common.retrieval_config_path);
+    rag::ModelConfig model_cfg = rag::ConfigLoader::loadModelConfig(cli.common.model_config_path);
+    rag::RetrievalConfig retrieval_cfg = rag::ConfigLoader::loadRetrievalConfig(cli.common.retrieval_config_path);
+
     std::cerr << "[trace] model_config_path=" << cli.common.model_config_path << '\n';
     std::cerr << "[trace] retrieval_config_path=" << cli.common.retrieval_config_path << '\n';
     std::cerr << "[trace] prompt_system_path=" << model_cfg.prompt_system_path << '\n';
+
+    if (!isBatchJsonlMode(cli)) {
+      rag::query::QueryRequest request =
+          cli.request_json_path.empty() ? rag::query::buildQuestionRequest(cli.question, model_cfg, retrieval_cfg)
+                                        : rag::query::loadRequestFromJson(cli.request_json_path);
+      rag::query::validateRequest(request);
+      request_for_error = request;
+      rag::query::applyRequestToConfigs(request, model_cfg, retrieval_cfg);
+    }
 
     std::vector<rag::Chunk> chunks = loadChunkStore(retrieval_cfg.chunk_store_path);
     rag::FaissIndex index = rag::FaissIndex::load(retrieval_cfg.index_path);
@@ -197,18 +179,24 @@ int main(int argc, char** argv) {
 
     if (isBatchJsonlMode(cli)) {
       rag::exportScifactPredictionsJsonl(pipeline, model_cfg, retrieval_cfg, cli.scifact_export);
+      nlohmann::json batch_result;
+      batch_result["mode"] = "batch_export_jsonl";
+      batch_result["status"] = "ok";
+      batch_result["error"] = nullptr;
+      batch_result["output_jsonl"] = cli.scifact_export.output_jsonl_path;
+      std::cout << batch_result.dump() << '\n';
       return 0;
     }
 
-    if (!cli.question.empty()) {
-      runSingleQuery(pipeline, cli.question);
-      return 0;
-    }
+    const rag::RagResult result = pipeline.run(request_for_error->question);
+    const double memory_mb = rag::query::getResidentMemoryMb();
 
-    runInteractive(pipeline);
+    const nlohmann::json output = rag::query::buildSingleRunSuccessJson(*request_for_error, result, memory_mb);
+    std::cout << output.dump() << '\n';
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[query][error] " << e.what() << '\n';
+    std::cout << rag::query::buildSingleRunErrorJson(request_for_error, e.what()).dump() << '\n';
     return 1;
   }
 }

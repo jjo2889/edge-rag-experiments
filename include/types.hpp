@@ -35,6 +35,7 @@ struct RagResult {
   int output_tokens = 0;
   bool prompt_truncated = false;
   int64_t retrieve_ms = 0;
+  int64_t prompt_build_ms = 0;
   int64_t generate_ms = 0;
   int64_t total_ms = 0;
   double output_tokens_per_sec = 0.0;

@@ -1,73 +1,21 @@
 # edge-rag-experiments
 
-C++ 기반 최소 RAG 파이프라인 (`llama.cpp + ONNX 임베딩 + FAISS`)
+C++ 기반 최소 RAG 실험 코드베이스 (`llama.cpp + ONNX 임베딩 + FAISS`)
 
 ## 문서
 
 - 환경 설정: `docs/SETUP.md`
+- 입출력 계약(API 명세): `docs/IO_CONTRACT.md`
 - 형상관리 기준: `docs/VERSION_CONTROL.md`
 
-## 생성 길이 설정 정책
+## 빠른 시작
 
-- 모델 설정 키는 `max_new_tokens`만 지원
-- `max_tokens`는 지원하지 않으며, 설정 시 실행 초기에 오류로 종료됨
+1. 의존성/모델/데이터 준비
+2. 빌드
+3. ingest
+4. query 실행
 
-## 프롬프트 설정 정책
-
-- 시스템 프롬프트는 `configs/prompt_system.txt`에서 로드
-- `configs/model.yaml`의 `prompt_system_path`로 경로를 고정/관리
-
-## Query 실행 모드
-
-- 단일 질의:
-  - `./build/rag_query --model_config ... --retrieval_config ... --question "..."`
-- 배치 JSONL export (RAGAS 입력용):
-  - `./build/rag_query --model_config ... --retrieval_config ... --questions ... --qrels ... --corpus ... --output_jsonl ... [--limit N]`
-- `--question`과 `--output_jsonl` 배치 모드는 동시에 사용할 수 없음
-
-SciFact 배치 export 예시:
-
-```bash
-./build/rag_query \
-  --model_config configs/model.yaml \
-  --retrieval_config configs/retrieval_scifact.yaml \
-  --questions data/beir/scifact/queries.jsonl \
-  --qrels data/beir/scifact/qrels/test.tsv \
-  --corpus data/beir/scifact/corpus.jsonl \
-  --output_jsonl results/runs/scifact_naive_rag/predictions.jsonl \
-  --limit 5
-```
-
-Reference 생성 정책(배치 export):
-
-- `qrels(test)`의 positive `corpus-id` 문서만 사용
-- 각 문서는 `title + "\n" + text`로 구성
-- 여러 문서는 `"\n\n"`로 연결
-
-## 빠른 시작 (fresh clone)
-
-이 저장소는 재현성을 위해 대용량/외부 산출물을 Git에서 제외한다.
-아래 경로는 clone 직후 비어있는 것이 정상이다.
-
-- `third_party/`
-- `models/`
-- `data/`
-
-준비 방식 요약:
-
-- 스크립트로 준비: `third_party` (`scripts/setup_third_party.sh`, `scripts/rebuild_llama.sh`)
-- 직접 준비(필수): 생성 모델 1개 파일
-  - `models/gemma/gemma-3-270m-it-Q4_K_S.gguf`
-- 임베딩 모델 준비(택1)
-  - 직접 준비: `models/all-MiniLM-L6-v2-onnx/model.onnx`, `models/all-MiniLM-L6-v2-onnx/tokenizer.json`
-  - 스크립트 준비: `scripts/setup_embedding_model.sh` (기본은 고정 revision, 필요 시 `EMBEDDING_REVISION` override)
-- 데이터 준비(택1)
-  - 직접 준비: `data/raw` 아래에 `.txt`/`.md`/`.jsonl` 배치
-  - 스크립트 준비: `scripts/setup_scifact_data.sh` (출력: `data/raw/scifact_corpus.jsonl`)
-
-자세한 준비 절차는 `docs/SETUP.md`.
-
-scifact 자동 데이터 기준 실행:
+예시:
 
 ```bash
 scripts/setup_third_party.sh
@@ -82,21 +30,63 @@ cmake -S . -B build
 cmake --build build -j
 
 ./build/rag_ingest --model_config configs/model.yaml --retrieval_config configs/retrieval.yaml
-./build/rag_query  --model_config configs/model.yaml --retrieval_config configs/retrieval.yaml
+./build/rag_query --model_config configs/model.yaml --retrieval_config configs/retrieval.yaml --question "What is RAG?"
 ```
 
-직접 데이터 배치 기준 실행:
+참고:
+- clone 직후 `third_party/`, `models/`, `data/`가 비어있는 것은 정상
+- 준비 경로 상세는 `docs/SETUP.md` 참고
+
+## Query 실행
+
+### 단일 질의 (권장)
+
+구조화 입력(JSON):
 
 ```bash
-scripts/setup_third_party.sh
-scripts/rebuild_llama.sh
-
-source scripts/activate_env.sh
-scripts/check_env.sh
-
-cmake -S . -B build
-cmake --build build -j
-
-./build/rag_ingest --model_config configs/model.yaml --retrieval_config configs/retrieval.yaml
-./build/rag_query  --model_config configs/model.yaml --retrieval_config configs/retrieval.yaml
+./build/rag_query \
+  --model_config configs/model.yaml \
+  --retrieval_config configs/retrieval_scifact.yaml \
+  --request_json /path/to/request.json
 ```
+
+간편 입력(수동 테스트용):
+
+```bash
+./build/rag_query \
+  --model_config configs/model.yaml \
+  --retrieval_config configs/retrieval_scifact.yaml \
+  --question "0-dimensional biomaterials show inductive properties."
+```
+
+### 배치 JSONL export (RAGAS 입력 생성)
+
+```bash
+./build/rag_query \
+  --model_config configs/model.yaml \
+  --retrieval_config configs/retrieval_scifact.yaml \
+  --questions data/beir/scifact/queries.jsonl \
+  --qrels data/beir/scifact/qrels/test.tsv \
+  --corpus data/beir/scifact/corpus.jsonl \
+  --output_jsonl results/runs/scifact_naive_rag/predictions.jsonl \
+  --limit 5
+```
+
+규칙:
+- `--output_jsonl` 배치 모드와 `--request_json`/`--question` 단일 모드는 동시에 사용할 수 없음
+
+## 출력 정책
+
+- `stdout`: 기계 파싱용 JSON 1개만 출력
+- `stderr`: trace/warn/error 운영 로그만 출력
+- 벤치마크 수치 source-of-truth:
+  - 단일 질의: `stdout.metrics`
+  - 배치 export: JSONL row의 `trace`
+
+## 실험 고정 정책
+
+- 생성 길이 제어 키는 `max_new_tokens`만 지원 (`max_tokens` 미지원)
+- 시스템 프롬프트는 `configs/model.yaml`의 `prompt_system_path`로 로드
+- SciFact export의 `reference`는 qrels positive 문서(`title + "\n" + text`) 결합 정책 사용
+
+입출력 필드/필수값/null 허용 여부는 반드시 `docs/IO_CONTRACT.md`와 `docs/schemas/*.json`을 기준으로 사용.

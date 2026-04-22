@@ -18,7 +18,9 @@ RagResult RagPipeline::run(const std::string& query) const {
   const std::vector<RetrievedChunk> contexts = retriever_->retrieve(query, top_k_);
   const auto retrieve_end = std::chrono::steady_clock::now();
 
+  const auto prompt_build_start = std::chrono::steady_clock::now();
   const std::string prompt_body = prompt_builder_->buildPrompt(query, contexts);
+  const auto prompt_build_end = std::chrono::steady_clock::now();
 
   const auto generate_start = std::chrono::steady_clock::now();
   const GenerationTrace generation_trace = generator_->generateWithTrace(prompt_body);
@@ -36,6 +38,8 @@ RagResult RagPipeline::run(const std::string& query) const {
   result.output_tokens = generation_trace.output_tokens;
   result.prompt_truncated = generation_trace.prompt_truncated;
   result.retrieve_ms = std::chrono::duration_cast<std::chrono::milliseconds>(retrieve_end - retrieve_start).count();
+  result.prompt_build_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(prompt_build_end - prompt_build_start).count();
   result.generate_ms = std::chrono::duration_cast<std::chrono::milliseconds>(generate_end - generate_start).count();
   result.total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(generate_end - total_start).count();
 

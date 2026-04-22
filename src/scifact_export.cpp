@@ -263,6 +263,7 @@ nlohmann::json buildPredictionRow(const std::string& sample_id,
   trace["output_tokens"] = result.output_tokens;
   trace["prompt_truncated"] = result.prompt_truncated;
   trace["retrieve_ms"] = result.retrieve_ms;
+  trace["prompt_build_ms"] = result.prompt_build_ms;
   trace["generate_ms"] = result.generate_ms;
   trace["total_ms"] = result.total_ms;
   trace["output_tokens_per_sec"] = result.output_tokens_per_sec;
@@ -328,7 +329,7 @@ void exportScifactPredictionsJsonl(const RagPipeline& pipeline,
     out << row.dump() << '\n';
     ++written;
 
-    std::cerr << "[batch] wrote sample_id=" << sample_id << " total_ms=" << result.total_ms << '\n';
+    std::cerr << "[batch] wrote sample_id=" << sample_id << '\n';
   }
 
   std::cerr << "[batch] output_jsonl=" << options.output_jsonl_path << " rows=" << written << '\n';
