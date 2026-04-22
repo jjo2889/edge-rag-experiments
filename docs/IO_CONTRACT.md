@@ -27,8 +27,6 @@
 
 ## 단일 질의 입력 (`--request_json`)
 
-스키마: `docs/schemas/rag_query_request.schema.json`
-
 ### 필드 규칙
 
 | 필드 | 필수 | 타입 | 비고 |
@@ -67,8 +65,6 @@
 ```
 
 ## 단일 질의 출력 (`stdout` JSON 1개)
-
-스키마: `docs/schemas/rag_query_response.schema.json`
 
 ### 공통
 
@@ -122,9 +118,6 @@
   "output_jsonl": "results/runs/scifact_naive_rag/predictions.jsonl"
 }
 ```
-
-JSONL row 스키마:
-- `docs/schemas/scifact_predictions_row.schema.json`
 
 row 핵심 필드:
 - `sample_id`, `user_input`, `response`, `retrieved_contexts`

@@ -89,4 +89,4 @@ cmake --build build -j
 - 시스템 프롬프트는 `configs/model.yaml`의 `prompt_system_path`로 로드
 - SciFact export의 `reference`는 qrels positive 문서(`title + "\n" + text`) 결합 정책 사용
 
-입출력 필드/필수값/null 허용 여부는 반드시 `docs/IO_CONTRACT.md`와 `docs/schemas/*.json`을 기준으로 사용.
+입출력 필드/필수값/null 허용 여부는 `docs/IO_CONTRACT.md`를 기준으로 사용.
