@@ -22,6 +22,7 @@ scripts/setup_third_party.sh
 scripts/rebuild_llama.sh
 scripts/setup_embedding_model.sh
 scripts/setup_scifact_data.sh
+# or: scripts/setup_nq_data.sh
 
 source scripts/activate_env.sh
 scripts/check_env.sh
@@ -29,8 +30,9 @@ scripts/check_env.sh
 cmake -S . -B build
 cmake --build build -j
 
-./build/rag_ingest --model_config configs/model.yaml --retrieval_config configs/retrieval.yaml
-./build/rag_query --model_config configs/model.yaml --retrieval_config configs/retrieval.yaml --question "What is RAG?"
+./build/rag_ingest --model_config configs/model.yaml --retrieval_config configs/retrieval_scifact.yaml
+./build/rag_query --model_config configs/model.yaml --retrieval_config configs/retrieval_scifact.yaml --question "0-dimensional biomaterials show inductive properties."
+# NQ는 /retrieval_scifact.yaml 대신 /retrieval_nq.yaml 사용
 ```
 
 참고:
@@ -38,6 +40,7 @@ cmake --build build -j
 - 준비 경로 상세는 `docs/SETUP.md` 참고
 
 ## Query 실행
+- NQ는 /retrieval_scifact.yaml 대신 /retrieval_nq.yaml 사용
 
 ### 단일 질의 (권장)
 
@@ -67,13 +70,43 @@ cmake --build build -j
   --retrieval_config configs/retrieval_scifact.yaml \
   --questions data/beir/scifact/queries.jsonl \
   --qrels data/beir/scifact/qrels/test.tsv \
-  --corpus data/beir/scifact/corpus.jsonl \
+  --corpus data/beir/scifact_corpus/corpus.jsonl \
   --output_jsonl results/runs/scifact_naive_rag/predictions.jsonl \
   --limit 5
 ```
 
 규칙:
 - `--output_jsonl` 배치 모드와 `--request_json`/`--question` 단일 모드는 동시에 사용할 수 없음
+
+### 다른 코퍼스 추가
+
+- `rag_ingest`는 `retrieval_config.data_dir` 아래의 `.txt`, `.md`, `.jsonl`을 읽음
+- BEIR처럼 `queries.jsonl`, `qrels/`가 같이 있는 루트는 그대로 ingest하지 말고 corpus-only 디렉터리를 사용
+- 새 retrieval config는 `configs/retrieval_dataset.yaml.example`에서 시작
+- JSONL 문서는 `_id`/`id`, `title`(선택), `text`/`contents`/`body` 중 하나를 가지면 됨
+
+### BEIR 데이터셋 예시
+
+```bash
+scripts/setup_scifact_data.sh
+scripts/setup_nq_data.sh
+```
+
+- SciFact ingest: `data/beir/scifact_corpus/corpus.jsonl`
+- SciFact eval: `data/beir/scifact/queries.jsonl`, `data/beir/scifact/qrels/test.tsv`
+- NQ ingest: `data/beir/nq_corpus/corpus.jsonl`
+- NQ eval: `data/beir/nq/queries.jsonl`, `data/beir/nq/qrels/test.tsv`
+
+```bash
+scripts/setup_nq_data.sh --full --force
+```
+
+주의:
+- `rag_ingest`는 `configs/retrieval_<dataset>.yaml`의 `data_dir`를 읽음
+- BEIR 루트는 ingest하지 말고 `<dataset>_corpus` 경로를 사용
+- 기본 `setup_nq_data.sh`는 고정 subset 생성
+- `--full`일 때만 전체 추출
+- 현재 `--output_jsonl` batch export는 SciFact 전용
 
 ## 출력 정책
 

@@ -12,7 +12,7 @@
 - 스크립트 준비(권장): `third_party` (`scripts/setup_third_party.sh`, `scripts/rebuild_llama.sh`)
 - 데이터 준비(택1)
   - 직접 준비: `data/raw` 아래에 `.txt`/`.md`/`.jsonl` 배치
-  - 스크립트 준비: `scripts/setup_scifact_data.sh` 실행
+  - 스크립트 준비: `scripts/setup_scifact_data.sh` 또는 `scripts/setup_nq_data.sh` 실행
 
 ## 1) 필수 의존성
 
@@ -92,18 +92,44 @@ scripts/setup_embedding_model.sh
 
 ## 5) 데이터 배치 (택1)
 
-- 기본 인덱싱 입력 경로: `data/raw`
-- `rag_ingest`는 `data/raw` 아래의 `.txt`, `.md`, `.jsonl`만 읽는다.
-- 직접 준비: 원하는 문서 파일을 `data/raw` 아래에 배치
-- 스크립트 준비(scifact): 기본 경로에 바로 배치
+- `rag_ingest`는 `retrieval_config.data_dir` 아래의 `.txt`, `.md`, `.jsonl`을 읽는다.
+- 직접 준비: 원하는 문서 파일을 `data/raw` 아래에 배치하고 `configs/retrieval.yaml` 사용
+- BEIR 데이터셋은 공통 규칙을 사용:
+  - ingest: `data/beir/<dataset>_corpus/corpus.jsonl`
+  - eval: `data/beir/<dataset>/queries.jsonl`, `data/beir/<dataset>/qrels/test.tsv`
+
+SciFact:
 
 ```bash
 scripts/setup_scifact_data.sh
 ```
 
-위 스크립트 출력:
+- `data/beir/scifact_corpus/corpus.jsonl`
+- `data/beir/scifact/queries.jsonl`
+- `data/beir/scifact/qrels/test.tsv`
 
-- `data/raw/scifact_corpus.jsonl`
+NQ:
+
+```bash
+scripts/setup_nq_data.sh
+```
+
+- `data/beir/nq_corpus/corpus.jsonl`
+- `data/beir/nq/queries.jsonl`
+- `data/beir/nq/qrels/test.tsv`
+
+기본 subset 정책:
+- qrels 순서 기준 앞 500 query
+- 해당 query의 positive doc 전부 포함
+- non-gold doc 20000개 추가
+
+전체가 필요할 때만:
+
+```bash
+scripts/setup_nq_data.sh --full
+```
+
+- BEIR 루트 전체는 ingest하지 않고, `<dataset>_corpus` 경로를 `retrieval_config.data_dir`로 사용한다.
 
 ## 6) 환경 활성화/점검
 
@@ -128,6 +154,16 @@ cmake --build build -j
 
 ./build/rag_ingest --model_config configs/model.yaml --retrieval_config configs/retrieval.yaml
 ./build/rag_query  --model_config configs/model.yaml --retrieval_config configs/retrieval.yaml
+```
+
+BEIR 예시:
+
+```bash
+./build/rag_ingest --model_config configs/model.yaml --retrieval_config configs/retrieval_scifact.yaml
+./build/rag_query  --model_config configs/model.yaml --retrieval_config configs/retrieval_scifact.yaml
+
+./build/rag_ingest --model_config configs/model.yaml --retrieval_config configs/retrieval_nq.yaml
+./build/rag_query  --model_config configs/model.yaml --retrieval_config configs/retrieval_nq.yaml
 ```
 
 ## 7) 생성 길이 설정 주의사항

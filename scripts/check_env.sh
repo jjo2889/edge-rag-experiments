@@ -53,13 +53,35 @@ if [ -z "${LLAMA_LIB_PATH}" ]; then
 fi
 echo "[ok] path: ${LLAMA_LIB_PATH}"
 
-need_dir "${ROOT_DIR}/data/raw"
-TEXT_FILE_COUNT="$(find "${ROOT_DIR}/data/raw" -type f \( -name '*.txt' -o -name '*.md' -o -name '*.jsonl' \) | wc -l | tr -d ' ')"
-if [ "${TEXT_FILE_COUNT}" -eq 0 ]; then
-  echo "[fail] no ingestible files (.txt/.md/.jsonl) under ${ROOT_DIR}/data/raw"
+DATA_DIRS=()
+if [ -d "${ROOT_DIR}/data/raw" ]; then
+  DATA_DIRS+=("${ROOT_DIR}/data/raw")
+fi
+if [ -d "${ROOT_DIR}/data/beir" ]; then
+  while IFS= read -r dir; do
+    DATA_DIRS+=("${dir}")
+  done < <(find "${ROOT_DIR}/data/beir" -mindepth 1 -maxdepth 1 -type d -name '*_corpus' | sort)
+fi
+
+if [ "${#DATA_DIRS[@]}" -eq 0 ]; then
+  echo "[fail] no ingestible data directories found under ${ROOT_DIR}/data/raw or ${ROOT_DIR}/data/beir/*_corpus"
   exit 1
 fi
-echo "[ok] ingestible files under data/raw: ${TEXT_FILE_COUNT}"
+
+TOTAL_TEXT_FILE_COUNT=0
+for data_dir in "${DATA_DIRS[@]}"; do
+  DIR_TEXT_FILE_COUNT="$(find "${data_dir}" -type f \( -name '*.txt' -o -name '*.md' -o -name '*.jsonl' \) | wc -l | tr -d ' ')"
+  if [ "${DIR_TEXT_FILE_COUNT}" -gt 0 ]; then
+    echo "[ok] ingestible files under ${data_dir#${ROOT_DIR}/}: ${DIR_TEXT_FILE_COUNT}"
+    TOTAL_TEXT_FILE_COUNT=$((TOTAL_TEXT_FILE_COUNT + DIR_TEXT_FILE_COUNT))
+  fi
+done
+
+if [ "${TOTAL_TEXT_FILE_COUNT}" -eq 0 ]; then
+  echo "[fail] no ingestible files (.txt/.md/.jsonl) under data/raw or data/beir/*_corpus"
+  exit 1
+fi
+echo "[ok] total ingestible files: ${TOTAL_TEXT_FILE_COUNT}"
 
 FAISS_STATIC_LIB="$(find "${FAISS_ROOT}" -type f -name 'libfaiss.a' 2>/dev/null | sort | head -n 1 || true)"
 if [ -n "${FAISS_STATIC_LIB}" ]; then
