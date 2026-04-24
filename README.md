@@ -82,7 +82,7 @@ cmake --build build -j
 
 - `rag_ingest`는 `retrieval_config.data_dir` 아래의 `.txt`, `.md`, `.jsonl`을 읽음
 - BEIR처럼 `queries.jsonl`, `qrels/`가 같이 있는 루트는 그대로 ingest하지 말고 corpus-only 디렉터리를 사용
-- 새 retrieval config는 `configs/retrieval_dataset.yaml.example`에서 시작
+- 새 retrieval config는 기존 `configs/retrieval_scifact.yaml` 또는 `configs/retrieval_nq.yaml`를 복사해서 시작
 - JSONL 문서는 `_id`/`id`, `title`(선택), `text`/`contents`/`body` 중 하나를 가지면 됨
 
 ### BEIR 데이터셋 예시
