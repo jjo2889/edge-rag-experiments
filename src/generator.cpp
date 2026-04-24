@@ -46,6 +46,7 @@ Generator::Generator(ModelConfig config)
       model_(nullptr),
       vocab_(nullptr),
       system_prompt_(),
+      chat_template_(),
       context_limit_(std::max(128, config_.n_ctx)),
       ctx_n_batch_(0),
       ctx_(nullptr),
@@ -65,6 +66,13 @@ Generator::Generator(ModelConfig config)
   vocab_ = llama_model_get_vocab(model_);
   if (vocab_ == nullptr) {
     throw std::runtime_error("Failed to get model vocabulary.");
+  }
+
+  if (config_.use_model_chat_template) {
+    const char* tmpl = llama_model_chat_template(model_, nullptr);
+    if (tmpl != nullptr) {
+      chat_template_ = tmpl;
+    }
   }
 
   const int initial_n_batch = std::max(1, std::min(context_limit_, config_.n_batch));
@@ -88,6 +96,10 @@ Generator::~Generator() {
 }
 
 std::string Generator::buildFinalPrompt(const std::string& prompt_body) const {
+  if (!chat_template_.empty()) {
+    return buildChatPrompt(prompt_body);
+  }
+
   if (system_prompt_.empty()) {
     return prompt_body;
   }
@@ -99,6 +111,55 @@ std::string Generator::buildFinalPrompt(const std::string& prompt_body) const {
   final_prompt.push_back('\n');
   final_prompt.append(prompt_body);
   return final_prompt;
+}
+
+std::string Generator::buildChatPrompt(const std::string& prompt_body) const {
+  std::vector<llama_chat_message> chat;
+  chat.reserve(system_prompt_.empty() ? 1 : 2);
+
+  if (!system_prompt_.empty()) {
+    chat.push_back({"system", system_prompt_.c_str()});
+  }
+  chat.push_back({"user", prompt_body.c_str()});
+
+  const size_t approx_chars = system_prompt_.size() + prompt_body.size();
+  std::vector<char> buf(std::max<size_t>(512, approx_chars * 4 + 256), '\0');
+  int32_t needed =
+      llama_chat_apply_template(chat_template_.c_str(), chat.data(), chat.size(), true, buf.data(), buf.size());
+  if (needed < 0) {
+    return system_prompt_.empty() ? prompt_body : (system_prompt_ + "\n\n" + prompt_body);
+  }
+
+  if (needed >= static_cast<int32_t>(buf.size())) {
+    buf.assign(static_cast<size_t>(needed) + 1, '\0');
+    needed = llama_chat_apply_template(chat_template_.c_str(), chat.data(), chat.size(), true, buf.data(), buf.size());
+    if (needed < 0) {
+      return system_prompt_.empty() ? prompt_body : (system_prompt_ + "\n\n" + prompt_body);
+    }
+  }
+
+  return std::string(buf.data(), static_cast<size_t>(needed));
+}
+
+bool Generator::trimAtStopString(std::string& output_text) const {
+  size_t first_match = std::string::npos;
+  for (const auto& stop : config_.stop_strings) {
+    if (stop.empty()) {
+      continue;
+    }
+
+    const size_t pos = output_text.find(stop);
+    if (pos != std::string::npos && (first_match == std::string::npos || pos < first_match)) {
+      first_match = pos;
+    }
+  }
+
+  if (first_match == std::string::npos) {
+    return false;
+  }
+
+  output_text.erase(first_match);
+  return true;
 }
 
 std::string Generator::generate(const std::string& prompt_body) const {
@@ -173,6 +234,12 @@ GenerationTrace Generator::generateWithTrace(const std::string& prompt_body) con
     throw std::runtime_error("Failed to create llama sampler chain.");
   }
 
+  if (config_.repetition_penalty_last_n != 0 && config_.repetition_penalty != 1.0F) {
+    llama_sampler_chain_add(sampler.get(),
+                            llama_sampler_init_penalties(
+                                config_.repetition_penalty_last_n, config_.repetition_penalty, 0.0F, 0.0F));
+  }
+
   if (config_.temperature <= 0.0F) {
     llama_sampler_chain_add(sampler.get(), llama_sampler_init_greedy());
   } else {
@@ -225,6 +292,9 @@ GenerationTrace Generator::generateWithTrace(const std::string& prompt_body) con
     }
     trace.output_text.append(piece, piece + n);
     ++output_tokens;
+    if (trimAtStopString(trace.output_text)) {
+      break;
+    }
 
     llama_sampler_accept(sampler.get(), token);
     batch = llama_batch_get_one(&token, 1);

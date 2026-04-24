@@ -87,6 +87,8 @@ cmake --build build -j
 
 - 생성 길이 제어 키는 `max_new_tokens`만 지원 (`max_tokens` 미지원)
 - 시스템 프롬프트는 `configs/model.yaml`의 `prompt_system_path`로 로드
+- `use_model_chat_template`는 기본 비활성화. 일부 GGUF instruction 모델은 켰을 때 빈 응답(EOG) 회귀가 생길 수 있어 opt-in 사용 권장
+- 필요 시 `stop_strings`로 프롬프트 재생산/반복 출력을 조기 종료
 - SciFact export의 `reference`는 qrels positive 문서(`title + "\n" + text`) 결합 정책 사용
 
 입출력 필드/필수값/null 허용 여부는 `docs/IO_CONTRACT.md`를 기준으로 사용.

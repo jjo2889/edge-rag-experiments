@@ -52,6 +52,13 @@ ModelConfig ConfigLoader::loadModelConfig(const std::string& path) {
   cfg.top_k = readOrDefault<int>(root, "top_k", cfg.top_k);
   cfg.top_p = readOrDefault<float>(root, "top_p", cfg.top_p);
   cfg.seed = readOrDefault<uint32_t>(root, "seed", cfg.seed);
+  cfg.repetition_penalty = readOrDefault<float>(root, "repetition_penalty", cfg.repetition_penalty);
+  cfg.repetition_penalty_last_n =
+      readOrDefault<int>(root, "repetition_penalty_last_n", cfg.repetition_penalty_last_n);
+  cfg.use_model_chat_template = readOrDefault<bool>(root, "use_model_chat_template", cfg.use_model_chat_template);
+  if (root["stop_strings"]) {
+    cfg.stop_strings = root["stop_strings"].as<std::vector<std::string>>();
+  }
 
   return cfg;
 }

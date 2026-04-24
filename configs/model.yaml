@@ -9,6 +9,11 @@ n_ctx: 2048
 n_batch: 512
 n_threads: 4
 
+# 기본값은 기존 raw prompt 경로를 유지한다.
+# 일부 instruction/chat GGUF에서는 내장 chat template 사용 시 즉시 EOG로 빈 응답이 나올 수 있다.
+# 필요할 때만 실험적으로 켠다.
+use_model_chat_template: false
+
 # Generation length policy:
 # - Supported key: max_new_tokens
 # - Unsupported key: max_tokens (startup error)
@@ -17,3 +22,15 @@ temperature: 0.2
 top_k: 40
 top_p: 0.9
 seed: 42
+
+# repetition_penalty:
+# - 1.0 = disabled
+# - > 1.0 = penalize repeated tokens in the last N tokens
+repetition_penalty: 1.1
+repetition_penalty_last_n: 64
+
+# 반복 출력이나 프롬프트 재생산이 시작되면 여기서 자른다.
+stop_strings:
+  - "\n[Context]"
+  - "\n[Question]"
+  - "\n[Answer]"

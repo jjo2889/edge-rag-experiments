@@ -34,6 +34,8 @@ class Generator {
 
  private:
   std::string buildFinalPrompt(const std::string& prompt_body) const;
+  std::string buildChatPrompt(const std::string& prompt_body) const;
+  bool trimAtStopString(std::string& output_text) const;
   int computeRequiredBatchSize(int prompt_token_count) const;
   void recreateContextLocked(int requested_n_batch) const;
 
@@ -41,6 +43,7 @@ class Generator {
   llama_model* model_;
   const llama_vocab* vocab_;
   std::string system_prompt_;
+  std::string chat_template_;
   int context_limit_;
   mutable int ctx_n_batch_;
   mutable llama_context* ctx_;

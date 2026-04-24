@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace rag {
 
@@ -22,6 +23,12 @@ struct ModelConfig {
   int top_k = 40;
   float top_p = 0.9F;
   uint32_t seed = 42;
+  float repetition_penalty = 1.1F;
+  int repetition_penalty_last_n = 64;
+
+  // Optional generation guards for instruction/chat models.
+  bool use_model_chat_template = false;
+  std::vector<std::string> stop_strings;
 };
 
 struct RetrievalConfig {
