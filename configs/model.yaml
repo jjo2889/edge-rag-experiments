@@ -31,6 +31,7 @@ repetition_penalty_last_n: 64
 
 # 반복 출력이나 프롬프트 재생산이 시작되면 여기서 자른다.
 stop_strings:
+  - "\nI don't know"
   - "\n[Context]"
   - "\n[Question]"
   - "\n[Answer]"
