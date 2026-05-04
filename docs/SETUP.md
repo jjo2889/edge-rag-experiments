@@ -153,20 +153,20 @@ cmake -S . -B build
 cmake --build build -j
 
 ./build/rag_ingest --model_config configs/model.yaml --retrieval_config configs/retrieval.yaml
-./build/rag_query  --model_config configs/model.yaml --retrieval_config configs/retrieval.yaml
+./build/rag_query  --model_config configs/model.yaml --retrieval_config configs/retrieval.yaml --question "What is this corpus about?"
 ```
 
 BEIR 예시:
 
 ```bash
 ./build/rag_ingest --model_config configs/model.yaml --retrieval_config configs/retrieval_scifact.yaml
-./build/rag_query  --model_config configs/model.yaml --retrieval_config configs/retrieval_scifact.yaml
+./build/rag_query  --model_config configs/model.yaml --retrieval_config configs/retrieval_scifact.yaml --question "0-dimensional biomaterials lack inductive properties."
 
 ./build/rag_ingest --model_config configs/model.yaml --retrieval_config configs/retrieval_nq.yaml
-./build/rag_query  --model_config configs/model.yaml --retrieval_config configs/retrieval_nq.yaml
+./build/rag_query  --model_config configs/model.yaml --retrieval_config configs/retrieval_nq.yaml --question "What is the capital of France?"
 ```
 
-## 7) 생성 길이 설정 주의사항
+## 8) 생성 길이 설정 주의사항
 
 - `model.yaml`에서 생성 길이는 `max_new_tokens`만 사용
 - `max_tokens`는 의도적으로 미지원이며, 설정 시 프로그램이 시작 단계에서 오류를 발생시킴

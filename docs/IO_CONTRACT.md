@@ -1,144 +1,455 @@
 # RAG Query I/O Contract
 
-`rag_query`를 자동화(sweep / RAGAS 연동)에서 안정적으로 쓰기 위한 입출력 규약이다.
-코드 기준 파일:
-- `apps/query_main.cpp`
-- `src/scifact_export.cpp`
+`rag_query`를 실험 자동화와 RAGAS 평가 파이프라인에서 사용하기 위한 입출력 규약이다.
 
-## 기본 원칙
+## 범위
 
-- Naive RAG는 raw 결과만 출력한다.
-- RAGAS 점수(faithfulness, answer relevancy, context precision/recall)는 여기서 계산/출력하지 않는다.
-- `stdout`은 기계 파싱용 JSON만 출력한다.
-- `stderr`는 운영 로그(trace/warn/error)만 출력한다.
-- 성능 수치는 JSON 본문(`metrics`/`trace`)을 기준으로 본다.
+이 문서는 다음 실행 형태를 다룬다.
 
-## 실행 모드
+| 실행 형태 | 입력 | 출력 |
+|---|---|---|
+| 단일 수동 질의 | `--question` | `stdout` JSON object |
+| 단일 구조화 질의 | `--request_json` | `stdout` JSON object |
+| BEIR 배치 export | `--dataset`, `--split`, `--questions`, `--qrels`, `--corpus`, `--output_jsonl` | prediction JSONL, manifest JSON, `stdout` summary |
 
-1. 단일 질의
-- `--request_json <path>` 권장
-- `--question "..."` 간편 입력(수동 테스트용)
+생성, 검색, 프롬프트 설정은 `--model_config`와 `--retrieval_config`로 지정한다.
 
-2. 배치 export (RAGAS 입력 JSONL 생성)
-- `--questions --qrels --corpus --output_jsonl [--limit]`
+## 출력 채널
 
-제약:
-- 단일 질의 옵션(`--request_json`/`--question`)과 배치 옵션(`--output_jsonl`)은 같이 사용할 수 없다.
+| 채널 | 내용 |
+|---|---|
+| `stdout` | 기계 파싱용 JSON object 1개 |
+| `stderr` | 진행 상태, 경고, 오류 로그 |
+| prediction JSONL | 배치 샘플별 RAG 응답과 RAGAS 입력 필드 |
+| manifest JSON | 배치 실행 단위 입력 경로와 실행 설정 |
 
-## 단일 질의 입력 (`--request_json`)
+실행 관측값은 단일 실행과 배치 실행 모두 `trace`에 기록한다.
 
-### 필드 규칙
+## 공통 식별 필드
 
-| 필드 | 필수 | 타입 | 비고 |
+다음 필드는 단일 output, prediction row, manifest에서 같은 의미로 사용한다.
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `mode` | string | 출력 종류와 실행 경로를 구분하는 식별자 |
+| `dataset` | string \| null | 실험 데이터셋 이름. 예: `scifact`, `nq` |
+| `split` | string \| null | 데이터셋 분할 이름. 예: `train`, `dev`, `test` |
+| `sample_id` | string \| null | `dataset`/`split` 안에서 샘플을 식별하는 ID |
+
+`mode` 값:
+
+| 값 | 사용 위치 | 의미 |
+|---|---|---|
+| `naive_rag` | 단일 output | 현재 RAG pipeline 실행 결과 |
+| `batch_export_jsonl` | batch summary, manifest | 배치 prediction JSONL export 결과 |
+
+## Trace
+
+단일 output과 prediction row는 같은 `trace` 구조를 사용한다.
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `latency_ms.total` | integer | 검색 시작부터 생성 종료까지의 wall-clock 시간(ms) |
+| `latency_ms.retrieval` | integer | query embedding과 vector search 시간(ms) |
+| `latency_ms.prompt_build` | integer | retrieved context를 prompt body로 구성한 시간(ms) |
+| `latency_ms.generation` | integer | LLM 생성 시간(ms) |
+| `output_tokens_per_sec` | number | `output_tokens / generation elapsed seconds` |
+| `memory_mb` | number \| null | `rag_query` 프로세스의 resident set size(RSS) MB. 측정 불가 시 `null` |
+| `prompt_tokens_before_truncation` | integer | context window 제한 적용 전 prompt token 수 |
+| `prompt_tokens` | integer | 실제 모델 입력에 사용된 prompt token 수 |
+| `output_tokens` | integer | 생성된 token 수 |
+| `prompt_truncated` | boolean | context window 제한으로 prompt가 잘렸는지 여부 |
+
+## 단일 실행
+
+### 수동 질의
+
+```bash
+rag_query --question "..."
+```
+
+질문 문자열 하나를 직접 실행한다.
+
+### 구조화 질의
+
+```bash
+rag_query --request_json request.json
+```
+
+JSON 파일에서 질문과 샘플 식별 정보를 읽어 실행한다.
+
+### Request JSON
+
+| 필드 | 필수 여부 | 타입 | 의미 |
 |---|---|---|---|
-| `run_id` | 선택 | string | 비어 있거나 없으면 자동 생성 |
-| `dataset` | 필수 | string | 빈 문자열 불가 |
-| `question_id` | 필수 | string | 빈 문자열 불가 |
-| `question` | 필수 | string | 빈 문자열 불가 |
-| `prompt_template_id` | 필수 | string | 빈 문자열 불가 |
-| `retrieval.top_k` | 필수 | integer | `>= 1` |
-| `generation.temperature` | 필수 | number | `>= 0` |
-| `generation.top_p` | 필수 | number | `0 < top_p <= 1` |
-| `generation.max_tokens` | 필수 | integer | `>= 1` |
+| `question` | 필수 | string | 질의문 |
+| `run_id` | 선택 | string | 실행 추적 ID |
+| `dataset` | 선택 | string | 데이터셋 이름 |
+| `split` | 선택 | string | 데이터셋 분할 이름 |
+| `sample_id` | 선택 | string | 샘플 ID |
 
-`run_id` 자동 생성 규칙:
-- 형식: `auto_<dataset>_<question_id>_k<top_k>_t<temperature*1000>_p<top_p*1000>_m<max_tokens>`
-- sweep 자동화에서 별도 관리 ID가 있으면 입력에서 직접 지정하는 것을 권장
-
-입력 예시:
+예시:
 
 ```json
 {
   "dataset": "scifact",
-  "question_id": "q0001",
-  "question": "0-dimensional biomaterials show inductive properties.",
-  "prompt_template_id": "qa_only_context_v1",
-  "retrieval": {
-    "top_k": 3
+  "split": "test",
+  "sample_id": "1",
+  "question": "0-dimensional biomaterials lack inductive properties."
+}
+```
+
+Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, sampling, 검색 top-k, 프롬프트 경로는 config 파일에서 지정한다.
+
+### Output JSON
+
+성공 시 exit code는 `0`, 실패 시 exit code는 `1`이다.
+
+최상위 필드:
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `status` | string | `ok` 또는 `error` |
+| `error` | object \| null | 실패 메시지 |
+| `mode` | string | 출력 종류와 실행 경로를 구분하는 식별자 |
+| `request` | object | 입력 질의와 샘플 식별 정보 |
+| `answer` | string | 모델 응답 |
+| `retrieved_contexts` | array | 검색된 context 목록 |
+| `run_config` | object \| null | 실제 실행 설정 |
+| `trace` | object | latency, throughput, memory, token count, truncation 등 실행 관측값 |
+
+`request`:
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `run_id` | string \| null | 실행 추적 ID |
+| `dataset` | string \| null | 데이터셋 이름 |
+| `split` | string \| null | 데이터셋 분할 이름 |
+| `sample_id` | string \| null | 샘플 ID |
+| `question` | string \| null | 질의문 |
+
+`retrieved_contexts[]`:
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `rank` | integer | 1부터 시작하는 검색 순위 |
+| `doc_id` | string | 원문 문서 ID |
+| `chunk_id` | integer | chunk store 내 chunk ID |
+| `score` | number | retriever 원점수. 검색 순서는 `rank`를 기준으로 해석한다. |
+| `text` | string | context text |
+
+`run_config`:
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `model_config_path` | string \| null | model config 경로 |
+| `retrieval_config_path` | string \| null | retrieval config 경로 |
+| `generation` | object | 생성 설정 |
+| `retrieval` | object | 검색 설정 |
+| `prompt` | object | 프롬프트 설정 |
+
+`generation`:
+- `max_new_tokens`
+- `temperature`
+- `top_p`
+- `top_k`
+- `seed`
+- `repetition_penalty`
+- `repetition_penalty_last_n`
+- `stop_strings`
+
+`retrieval`:
+- `top_k`
+- `chunk_size`
+- `chunk_overlap`
+- `data_dir`
+- `index_path`
+- `chunk_store_path`
+
+`prompt`:
+- `system_prompt_path`
+- `use_model_chat_template`
+- `prompt_builder`
+
+`trace` 구조는 Trace 섹션을 따른다.
+
+단일 실행의 `retrieved_contexts`는 디버깅과 검토를 위해 context별 metadata를 포함하는 object 배열이다.
+
+성공 예시:
+
+```json
+{
+  "status": "ok",
+  "error": null,
+  "mode": "naive_rag",
+  "request": {
+    "run_id": null,
+    "dataset": "scifact",
+    "split": "test",
+    "sample_id": "1",
+    "question": "0-dimensional biomaterials lack inductive properties."
   },
-  "generation": {
-    "temperature": 0.1,
-    "top_p": 0.9,
-    "max_tokens": 64
+  "answer": "The retrieved evidence does not support the claim.",
+  "retrieved_contexts": [
+    {
+      "rank": 1,
+      "doc_id": "31715818",
+      "chunk_id": 42,
+      "score": 0.8123,
+      "text": "..."
+    }
+  ],
+  "run_config": {
+    "model_config_path": "configs/model.yaml",
+    "retrieval_config_path": "configs/retrieval_scifact.yaml",
+    "generation": {
+      "max_new_tokens": 128,
+      "temperature": 0.3,
+      "top_p": 0.85,
+      "top_k": 40,
+      "seed": 42,
+      "repetition_penalty": 1.1,
+      "repetition_penalty_last_n": 64,
+      "stop_strings": []
+    },
+    "retrieval": {
+      "top_k": 3,
+      "chunk_size": 256,
+      "chunk_overlap": 32,
+      "data_dir": "data/beir/scifact_corpus",
+      "index_path": "data/indexes/scifact/faiss.index",
+      "chunk_store_path": "data/indexes/scifact/chunks.jsonl"
+    },
+    "prompt": {
+      "system_prompt_path": "configs/prompt_system.txt",
+      "use_model_chat_template": false,
+      "prompt_builder": "builtin_context_question_answer"
+    }
+  },
+  "trace": {
+    "latency_ms": {
+      "total": 1320,
+      "retrieval": 24,
+      "prompt_build": 1,
+      "generation": 1295
+    },
+    "output_tokens_per_sec": 12.4,
+    "memory_mb": 512.5,
+    "prompt_tokens_before_truncation": 680,
+    "prompt_tokens": 680,
+    "output_tokens": 16,
+    "prompt_truncated": false
   }
 }
 ```
 
-## 단일 질의 출력 (`stdout` JSON 1개)
+실패 예시:
 
-### 공통
+```json
+{
+  "status": "error",
+  "error": {
+    "message": "Request field question must not be blank."
+  },
+  "mode": "naive_rag",
+  "request": {
+    "run_id": null,
+    "dataset": null,
+    "split": null,
+    "sample_id": null,
+    "question": ""
+  },
+  "answer": "",
+  "retrieved_contexts": [],
+  "run_config": null,
+  "trace": {
+    "latency_ms": {
+      "total": 0,
+      "retrieval": 0,
+      "prompt_build": 0,
+      "generation": 0
+    },
+    "output_tokens_per_sec": 0.0,
+    "memory_mb": null,
+    "prompt_tokens_before_truncation": 0,
+    "prompt_tokens": 0,
+    "output_tokens": 0,
+    "prompt_truncated": false
+  }
+}
+```
 
-- `stdout`은 JSON object 1개만 출력
-- 성공: `status="ok"`, exit code `0`
-- 실패: `status="error"`, exit code `1`
+## BEIR 배치 Export
 
-### 필드 규칙
+```bash
+rag_query \
+  --dataset scifact \
+  --split test \
+  --questions queries.jsonl \
+  --qrels test.tsv \
+  --corpus corpus.jsonl \
+  --output_jsonl predictions.jsonl \
+  [--limit N]
+```
 
-| 필드 | 항상 존재 | 타입 | 비고 |
-|---|---|---|---|
-| `run_id` | Y | string \| null | 입력값 또는 자동 생성값 |
-| `mode` | Y | string | 현재 `naive_rag` |
-| `dataset` | Y | string \| null | |
-| `question_id` | Y | string \| null | |
-| `question` | Y | string \| null | |
-| `answer` | Y | string | 실패 시 `""` |
-| `retrieved_contexts` | Y | array | 실패 시 `[]` |
-| `prompt_template_id` | Y | string \| null | |
-| `generation` | Y | object | `temperature/top_p/max_tokens` |
-| `metrics` | Y | object | `latency_ms/throughput_tokens_per_sec/memory_mb` |
-| `status` | Y | string | `ok` or `error` |
-| `error` | Y | object \| null | 실패 시 `{"message": ...}` |
+단일 실행 옵션(`--question`, `--request_json`)과 배치 출력 옵션(`--output_jsonl`)은 함께 쓰지 않는다.
 
-`retrieved_contexts[]` 항목:
-- `rank` (int)
-- `doc_id` (string)
-- `chunk_id` (int)
-- `score` (number)
-- `text` (string)
+### 입력 옵션
 
-`metrics.latency_ms` 항목:
-- `total`
-- `retrieval`
-- `prompt_build`
-- `generation`
+| 옵션 | 입력 형식 | 의미 |
+|---|---|---|
+| `--dataset` | string | prediction row와 manifest에 기록할 데이터셋 이름 |
+| `--split` | string | prediction row와 manifest에 기록할 데이터셋 split |
+| `--questions` | BEIR `queries.jsonl` | query ID와 질문 text를 읽는다. `_id` 또는 `id`, `text` 또는 `query` 필드를 사용한다. |
+| `--qrels` | TSV | 평가 대상 query 순서와 positive 문서 ID를 읽는다. `score > 0` row만 사용한다. |
+| `--corpus` | BEIR `corpus.jsonl` | qrels 문서 ID에 해당하는 reference text를 만든다. `_id` 또는 `id`, `title`, `text`/`contents`/`body` 필드를 사용한다. |
+| `--output_jsonl` | path | prediction JSONL 출력 경로 |
+| `--limit` | integer | qrels 순서 기준 최대 처리 샘플 수. 생략하거나 `0` 이하이면 제한 없음 |
 
-## 배치 export (`--output_jsonl`)
+qrels TSV 컬럼:
 
-- 역할: RAGAS 평가용 JSONL 생성
-- 파일: `--output_jsonl` 경로
-- 배치 실행 자체도 `stdout`에 JSON 1개를 출력
+| 컬럼 | 의미 |
+|---|---|
+| `query-id` | `queries.jsonl`의 query ID |
+| `corpus-id` | `corpus.jsonl`의 문서 ID |
+| `score` | relevance score |
 
-배치 실행 결과(stdout) 예시:
+### 산출물
+
+| 산출물 | 경로 | 의미 |
+|---|---|---|
+| prediction JSONL | `--output_jsonl` | 샘플별 RAG 응답과 RAGAS 입력 필드 |
+| manifest JSON | `<output_jsonl>.manifest.json` | 실행 단위 입력 경로와 설정 |
+
+`stdout` summary 예시:
 
 ```json
 {
   "mode": "batch_export_jsonl",
   "status": "ok",
   "error": null,
-  "output_jsonl": "results/runs/scifact_naive_rag/predictions.jsonl"
+  "dataset": "scifact",
+  "split": "test",
+  "output_jsonl": "results/runs/scifact_naive_rag/predictions.jsonl",
+  "manifest_json": "results/runs/scifact_naive_rag/predictions.jsonl.manifest.json",
+  "rows_written": 5
 }
 ```
 
-row 핵심 필드:
-- `sample_id`, `user_input`, `response`, `retrieved_contexts`
-- `reference`, `qrel_doc_ids`
-- `retrieved_doc_ids`, `retrieved_scores`
-- `generation_config`, `retrieval_config`, `trace`
+### Prediction Row
 
-reference 생성 정책(SciFact):
-- `qrels(test)`의 positive 문서만 사용
-- 각 문서는 `title + "\n" + text`
-- 여러 문서는 `"\n\n"`으로 연결
-- LLM으로 reference를 생성하지 않음
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `sample_id` | string | 데이터셋 내 샘플 ID |
+| `dataset` | string | 데이터셋 이름 |
+| `split` | string | 데이터셋 분할 이름 |
+| `user_input` | string | RAGAS `user_input` |
+| `response` | string | RAGAS `response` |
+| `retrieved_contexts` | array[string] | RAGAS `retrieved_contexts` |
+| `reference` | string | RAGAS `reference` |
+| `retrieved_ranks` | array[integer] | 검색 순위 |
+| `qrel_doc_ids` | array[string] | positive qrels 문서 ID |
+| `retrieved_doc_ids` | array[string] | 검색된 문서 ID |
+| `retrieved_scores` | array[number] | retriever 원점수 |
+| `trace` | object | 샘플별 실행 trace |
 
-## stderr 정책
+RAGAS 입력으로 직접 쓰는 필드는 `user_input`, `response`, `retrieved_contexts`, `reference`이다.
+배치 row의 `retrieved_contexts`는 RAGAS 입력 형식에 맞춘 string 배열이다. 검색 metadata는 `retrieved_ranks`, `retrieved_doc_ids`, `retrieved_scores`, `trace`에 분리해 기록한다.
+`retrieved_contexts`, `retrieved_ranks`, `retrieved_doc_ids`, `retrieved_scores`는 같은 길이의 배열이며, 같은 index가 같은 검색 결과를 의미한다.
 
-- 허용: 경로/진행 상태/경고/예외 메시지
-- 벤치마크 수치는 stderr에 싣지 않고 JSON(`metrics`/`trace`)만 사용
+prediction JSONL row 예시:
 
-## Python 자동화 권장 처리
+```json
+{
+  "sample_id": "1",
+  "dataset": "scifact",
+  "split": "test",
+  "user_input": "0-dimensional biomaterials lack inductive properties.",
+  "response": "The retrieved evidence does not support the claim.",
+  "retrieved_contexts": [
+    "..."
+  ],
+  "reference": "Biomaterials and inductive properties\n...",
+  "retrieved_ranks": [
+    1
+  ],
+  "qrel_doc_ids": [
+    "31715818"
+  ],
+  "retrieved_doc_ids": [
+    "31715818"
+  ],
+  "retrieved_scores": [
+    0.8123
+  ],
+  "trace": {
+    "latency_ms": {
+      "total": 1320,
+      "retrieval": 24,
+      "prompt_build": 1,
+      "generation": 1295
+    },
+    "output_tokens_per_sec": 12.4,
+    "memory_mb": 512.5,
+    "prompt_tokens_before_truncation": 680,
+    "prompt_tokens": 680,
+    "output_tokens": 16,
+    "prompt_truncated": false
+  }
+}
+```
 
-- `stdout`만 읽어 `json.loads()`
+### Manifest JSON
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `mode` | string | `batch_export_jsonl` |
+| `status` | string | `ok` 또는 `error` |
+| `dataset` | string | 데이터셋 이름 |
+| `split` | string | 데이터셋 분할 이름 |
+| `output_jsonl` | string | prediction JSONL 경로 |
+| `rows_written` | integer | 생성 row 수 |
+| `inputs` | object | questions/qrels/corpus 경로 |
+| `reference_policy` | string | reference 생성 정책 ID |
+| `run_config` | object | 실제 실행 설정 |
+
+`inputs`:
+- `questions`
+- `qrels`
+- `corpus`
+
+`run_config`는 단일 output과 같은 구조를 사용한다.
+
+### BEIR Reference 정책
+
+- qrels의 positive 문서만 사용한다.
+- 각 문서는 `title + "\n" + text`로 구성한다.
+- 여러 문서는 `"\n\n"`으로 연결한다.
+- LLM으로 reference를 생성하지 않는다.
+
+## Ingest 산출물
+
+`rag_ingest`는 `retrieval_config.data_dir` 아래의 `.txt`, `.md`, `.jsonl`을 읽고 chunk store JSONL과 FAISS index를 생성한다.
+
+JSONL 문서 ID 정책:
+- `_id`가 있으면 `_id`를 canonical `doc_id`로 사용한다.
+- `_id`가 없고 `id`가 있으면 `id`를 사용한다.
+- 둘 다 없으면 `<relative-path>#<line-no>`를 사용한다.
+- 숫자 ID는 문자열로 변환한다.
+
+chunk store row:
+
+```json
+{
+  "chunk_id": 0,
+  "doc_id": "31715818",
+  "text": "..."
+}
+```
+
+## 자동화 처리
+
+- `stdout`만 읽어 `json.loads()` 한다.
 - 성공 판정: `returncode == 0` and `obj["status"] == "ok"`
 - 실패 판정: `returncode != 0` or `obj["status"] == "error"`
 - 오류 메시지: `obj["error"]["message"]`

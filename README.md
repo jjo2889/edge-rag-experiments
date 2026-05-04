@@ -53,6 +53,8 @@ cmake --build build -j
   --request_json /path/to/request.json
 ```
 
+`request.json` 형식은 `docs/IO_CONTRACT.md`를 따른다.
+
 간편 입력(수동 테스트용):
 
 ```bash
@@ -68,6 +70,8 @@ cmake --build build -j
 ./build/rag_query \
   --model_config configs/model.yaml \
   --retrieval_config configs/retrieval_scifact.yaml \
+  --dataset scifact \
+  --split test \
   --questions data/beir/scifact/queries.jsonl \
   --qrels data/beir/scifact/qrels/test.tsv \
   --corpus data/beir/scifact_corpus/corpus.jsonl \
@@ -106,15 +110,16 @@ scripts/setup_nq_data.sh --full --force
 - BEIR 루트는 ingest하지 말고 `<dataset>_corpus` 경로를 사용
 - 기본 `setup_nq_data.sh`는 고정 subset 생성
 - `--full`일 때만 전체 추출
-- 현재 `--output_jsonl` batch export는 SciFact 전용
+- `--output_jsonl` batch export는 BEIR `queries.jsonl`, `qrels/*.tsv`, `corpus.jsonl` 입력을 사용
 
 ## 출력 정책
 
 - `stdout`: 기계 파싱용 JSON 1개만 출력
 - `stderr`: trace/warn/error 운영 로그만 출력
-- 벤치마크 수치 source-of-truth:
-  - 단일 질의: `stdout.metrics`
+- 벤치마크 수치 기준:
+  - 단일 질의: `stdout.trace`
   - 배치 export: JSONL row의 `trace`
+- 배치 export는 prediction JSONL과 manifest JSON을 생성한다.
 
 ## 실험 고정 정책
 
@@ -122,6 +127,6 @@ scripts/setup_nq_data.sh --full --force
 - 시스템 프롬프트는 `configs/model.yaml`의 `prompt_system_path`로 로드
 - `use_model_chat_template`는 기본 비활성화. 일부 GGUF instruction 모델은 켰을 때 빈 응답(EOG) 회귀가 생길 수 있어 opt-in 사용 권장
 - 필요 시 `stop_strings`로 프롬프트 재생산/반복 출력을 조기 종료
-- SciFact export의 `reference`는 qrels positive 문서(`title + "\n" + text`) 결합 정책 사용
+- BEIR batch export의 `reference`는 qrels positive 문서(`title + "\n" + text`) 결합 정책 사용
 
-입출력 필드/필수값/null 허용 여부는 `docs/IO_CONTRACT.md`를 기준으로 사용.
+상세 입출력 명세는 `docs/IO_CONTRACT.md`를 기준으로 사용.

@@ -1,15 +1,39 @@
 #include "document_loader.hpp"
 
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
 namespace rag {
 
 namespace fs = std::filesystem;
+
+namespace {
+
+std::string jsonValueToString(const nlohmann::json& value) {
+  if (value.is_string()) {
+    return value.get<std::string>();
+  }
+  if (value.is_number_integer()) {
+    return std::to_string(value.get<int64_t>());
+  }
+  if (value.is_number_unsigned()) {
+    return std::to_string(value.get<uint64_t>());
+  }
+  if (value.is_number_float()) {
+    std::ostringstream oss;
+    oss << value.get<double>();
+    return oss.str();
+  }
+  return {};
+}
+
+}  // namespace
 
 bool DocumentLoader::isTextLikeFile(const std::string& extension) {
   return extension == ".txt" || extension == ".md" || extension == ".jsonl";
@@ -78,9 +102,12 @@ std::vector<Document> DocumentLoader::loadJsonlFile(const std::string& path, con
     }
 
     Document doc;
-    if (j.contains("id") && j["id"].is_string()) {
-      doc.id = j["id"].get<std::string>();
-    } else {
+    if (j.contains("_id")) {
+      doc.id = jsonValueToString(j["_id"]);
+    } else if (j.contains("id")) {
+      doc.id = jsonValueToString(j["id"]);
+    }
+    if (doc.id.empty()) {
       doc.id = rel.string() + "#" + std::to_string(line_no);
     }
 

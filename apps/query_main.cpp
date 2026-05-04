@@ -1,13 +1,16 @@
+#include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "app_cli.hpp"
+#include "beir_export.hpp"
 #include "config.hpp"
 #include "embedding_model.hpp"
 #include "faiss_index.hpp"
@@ -17,7 +20,6 @@
 #include "query_response_json.hpp"
 #include "rag_pipeline.hpp"
 #include "retriever.hpp"
-#include "scifact_export.hpp"
 #include "types.hpp"
 
 namespace {
@@ -26,14 +28,16 @@ struct QueryCliOptions {
   rag::app::CommonCliOptions common;
   std::string question;
   std::string request_json_path;
-  rag::ScifactExportOptions scifact_export;
+  rag::BeirExportOptions beir_export;
+  bool question_provided = false;
   bool show_help = false;
 };
 
 void printUsage() {
   std::cout << "Usage: rag_query [--model_config path] [--retrieval_config path] --request_json path\n";
   std::cout << "       rag_query [--model_config path] [--retrieval_config path] --question \"...\"\n";
-  std::cout << "       rag_query --questions path --qrels path --corpus path --output_jsonl path [--limit N]\n";
+  std::cout << "       rag_query --dataset name --split name --questions path --qrels path --corpus path "
+               "--output_jsonl path [--limit N]\n";
 }
 
 std::vector<rag::Chunk> loadChunkStore(const std::string& path) {
@@ -72,36 +76,47 @@ QueryCliOptions parseQueryCliOptions(int argc, char** argv) {
         throw std::runtime_error("Missing value for --question");
       }
       options.question = argv[++i];
+      options.question_provided = true;
     } else if (arg == "--request_json") {
       if (i + 1 >= argc) {
         throw std::runtime_error("Missing value for --request_json");
       }
       options.request_json_path = argv[++i];
+    } else if (arg == "--dataset") {
+      if (i + 1 >= argc) {
+        throw std::runtime_error("Missing value for --dataset");
+      }
+      options.beir_export.dataset = argv[++i];
+    } else if (arg == "--split") {
+      if (i + 1 >= argc) {
+        throw std::runtime_error("Missing value for --split");
+      }
+      options.beir_export.split = argv[++i];
     } else if (arg == "--questions") {
       if (i + 1 >= argc) {
         throw std::runtime_error("Missing value for --questions");
       }
-      options.scifact_export.questions_path = argv[++i];
+      options.beir_export.questions_path = argv[++i];
     } else if (arg == "--qrels") {
       if (i + 1 >= argc) {
         throw std::runtime_error("Missing value for --qrels");
       }
-      options.scifact_export.qrels_path = argv[++i];
+      options.beir_export.qrels_path = argv[++i];
     } else if (arg == "--corpus") {
       if (i + 1 >= argc) {
         throw std::runtime_error("Missing value for --corpus");
       }
-      options.scifact_export.corpus_path = argv[++i];
+      options.beir_export.corpus_path = argv[++i];
     } else if (arg == "--output_jsonl") {
       if (i + 1 >= argc) {
         throw std::runtime_error("Missing value for --output_jsonl");
       }
-      options.scifact_export.output_jsonl_path = argv[++i];
+      options.beir_export.output_jsonl_path = argv[++i];
     } else if (arg == "--limit") {
       if (i + 1 >= argc) {
         throw std::runtime_error("Missing value for --limit");
       }
-      options.scifact_export.limit = std::stoi(argv[++i]);
+      options.beir_export.limit = std::stoi(argv[++i]);
     } else if (arg == "--help" || arg == "-h") {
       options.show_help = true;
       return options;
@@ -114,41 +129,72 @@ QueryCliOptions parseQueryCliOptions(int argc, char** argv) {
 }
 
 bool isBatchJsonlMode(const QueryCliOptions& options) {
-  return !options.scifact_export.output_jsonl_path.empty();
+  return !options.beir_export.output_jsonl_path.empty();
 }
 
 void validateQueryCliOptions(const QueryCliOptions& options) {
   const bool batch_mode = isBatchJsonlMode(options);
 
   if (batch_mode) {
-    if (options.scifact_export.questions_path.empty() || options.scifact_export.qrels_path.empty() ||
-        options.scifact_export.corpus_path.empty()) {
-      throw std::runtime_error("Batch JSONL mode requires --questions, --qrels, --corpus, and --output_jsonl.");
+    if (options.beir_export.dataset.empty() || options.beir_export.split.empty() ||
+        options.beir_export.questions_path.empty() || options.beir_export.qrels_path.empty() ||
+        options.beir_export.corpus_path.empty()) {
+      throw std::runtime_error(
+          "Batch JSONL mode requires --dataset, --split, --questions, --qrels, --corpus, and --output_jsonl.");
     }
-    if (!options.question.empty() || !options.request_json_path.empty()) {
+    if (options.question_provided || !options.request_json_path.empty()) {
       throw std::runtime_error("Batch JSONL mode cannot be combined with --question or --request_json.");
     }
     return;
   }
 
-  if (!options.question.empty() && !options.request_json_path.empty()) {
+  if (!options.beir_export.dataset.empty() || !options.beir_export.split.empty() ||
+      !options.beir_export.questions_path.empty() || !options.beir_export.qrels_path.empty() ||
+      !options.beir_export.corpus_path.empty()) {
+    throw std::runtime_error(
+        "Batch JSONL options require --output_jsonl and cannot be used with single query mode.");
+  }
+
+  if (options.question_provided && !options.request_json_path.empty()) {
     throw std::runtime_error("Use either --question or --request_json, not both.");
   }
-  if (options.question.empty() && options.request_json_path.empty()) {
+  if (!options.question_provided && options.request_json_path.empty()) {
     throw std::runtime_error("Single query mode requires --request_json or --question.");
   }
+}
+
+nlohmann::json buildBatchExportErrorJson(const std::string& output_jsonl_path, const std::string& message) {
+  nlohmann::json output;
+  const nlohmann::json output_jsonl =
+      output_jsonl_path.empty() ? nlohmann::json(nullptr) : nlohmann::json(output_jsonl_path);
+  output["mode"] = "batch_export_jsonl";
+  output["status"] = "error";
+  output["error"] = nlohmann::json{{"message", message}};
+  output["output_jsonl"] = output_jsonl;
+  output["manifest_json"] = output_jsonl_path.empty()
+                                ? nlohmann::json(nullptr)
+                                : nlohmann::json(rag::buildBeirManifestJsonPath(output_jsonl_path));
+  output["rows_written"] = 0;
+  return output;
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
   std::optional<rag::query::QueryRequest> request_for_error;
+  std::string error_mode = "naive_rag";
+  std::string output_jsonl_for_error;
 
   try {
     const QueryCliOptions cli = parseQueryCliOptions(argc, argv);
     if (cli.show_help) {
       printUsage();
       return 0;
+    }
+    const bool batch_mode = isBatchJsonlMode(cli);
+    if (batch_mode) {
+      error_mode = "batch_export_jsonl";
+      output_jsonl_for_error = cli.beir_export.output_jsonl_path;
     }
     validateQueryCliOptions(cli);
 
@@ -159,13 +205,12 @@ int main(int argc, char** argv) {
     std::cerr << "[trace] retrieval_config_path=" << cli.common.retrieval_config_path << '\n';
     std::cerr << "[trace] prompt_system_path=" << model_cfg.prompt_system_path << '\n';
 
-    if (!isBatchJsonlMode(cli)) {
+    if (!batch_mode) {
       rag::query::QueryRequest request =
-          cli.request_json_path.empty() ? rag::query::buildQuestionRequest(cli.question, model_cfg, retrieval_cfg)
+          cli.request_json_path.empty() ? rag::query::buildQuestionRequest(cli.question)
                                         : rag::query::loadRequestFromJson(cli.request_json_path);
-      rag::query::validateRequest(request);
       request_for_error = request;
-      rag::query::applyRequestToConfigs(request, model_cfg, retrieval_cfg);
+      rag::query::validateRequest(*request_for_error);
     }
 
     std::vector<rag::Chunk> chunks = loadChunkStore(retrieval_cfg.chunk_store_path);
@@ -177,13 +222,23 @@ int main(int argc, char** argv) {
     rag::Generator generator(model_cfg);
     rag::RagPipeline pipeline(retriever, prompt_builder, generator, retrieval_cfg.top_k);
 
-    if (isBatchJsonlMode(cli)) {
-      rag::exportScifactPredictionsJsonl(pipeline, model_cfg, retrieval_cfg, cli.scifact_export);
+    if (batch_mode) {
+      const size_t rows_written =
+          rag::exportBeirPredictionsJsonl(pipeline,
+                                          model_cfg,
+                                          retrieval_cfg,
+                                          cli.beir_export,
+                                          cli.common.model_config_path,
+                                          cli.common.retrieval_config_path);
       nlohmann::json batch_result;
       batch_result["mode"] = "batch_export_jsonl";
       batch_result["status"] = "ok";
       batch_result["error"] = nullptr;
-      batch_result["output_jsonl"] = cli.scifact_export.output_jsonl_path;
+      batch_result["dataset"] = cli.beir_export.dataset;
+      batch_result["split"] = cli.beir_export.split;
+      batch_result["output_jsonl"] = cli.beir_export.output_jsonl_path;
+      batch_result["manifest_json"] = rag::buildBeirManifestJsonPath(cli.beir_export.output_jsonl_path);
+      batch_result["rows_written"] = rows_written;
       std::cout << batch_result.dump() << '\n';
       return 0;
     }
@@ -191,12 +246,22 @@ int main(int argc, char** argv) {
     const rag::RagResult result = pipeline.run(request_for_error->question);
     const double memory_mb = rag::query::getResidentMemoryMb();
 
-    const nlohmann::json output = rag::query::buildSingleRunSuccessJson(*request_for_error, result, memory_mb);
+    const nlohmann::json output = rag::query::buildSingleRunSuccessJson(*request_for_error,
+                                                                         result,
+                                                                         model_cfg,
+                                                                         retrieval_cfg,
+                                                                         cli.common.model_config_path,
+                                                                         cli.common.retrieval_config_path,
+                                                                         memory_mb);
     std::cout << output.dump() << '\n';
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[query][error] " << e.what() << '\n';
-    std::cout << rag::query::buildSingleRunErrorJson(request_for_error, e.what()).dump() << '\n';
+    if (error_mode == "batch_export_jsonl") {
+      std::cout << buildBatchExportErrorJson(output_jsonl_for_error, e.what()).dump() << '\n';
+    } else {
+      std::cout << rag::query::buildSingleRunErrorJson(request_for_error, e.what()).dump() << '\n';
+    }
     return 1;
   }
 }

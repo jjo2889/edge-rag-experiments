@@ -65,7 +65,7 @@ set(RAG_CORE_SOURCES
   src/rag_pipeline.cpp
   src/query_request_io.cpp
   src/query_response_json.cpp
-  src/scifact_export.cpp)
+  src/beir_export.cpp)
 
 add_library(rag_core ${RAG_CORE_SOURCES})
 
