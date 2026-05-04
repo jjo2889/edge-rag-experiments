@@ -17,7 +17,7 @@ use_model_chat_template: false
 # Generation length policy:
 # - Supported key: max_new_tokens
 # - Unsupported key: max_tokens (startup error)
-max_new_tokens: 128
+max_new_tokens: 64
 temperature: 0.3
 top_k: 40
 top_p: 0.85
@@ -32,6 +32,11 @@ repetition_penalty_last_n: 64
 # 반복 출력이나 프롬프트 재생산이 시작되면 여기서 자른다.
 stop_strings:
   - "\nI don't know"
-  - "\n[Context]"
-  - "\n[Question]"
-  - "\n[Answer]"
+  - "\n[Citation"
+  - "\n[Explanation"
+  - "\n[Context"
+  - "\n[Question"
+  - "\n[Answer"
+  - "\n[Explanation"
+  - "\n[Note"
+  - "\n**"
