@@ -17,10 +17,10 @@ use_model_chat_template: false
 # Generation length policy:
 # - Supported key: max_new_tokens
 # - Unsupported key: max_tokens (startup error)
-max_new_tokens: 64
-temperature: 0.3
+max_new_tokens: 128
+temperature: 0.1
 top_k: 40
-top_p: 0.85
+top_p: 0.95
 seed: 42
 
 # repetition_penalty:
@@ -40,3 +40,4 @@ stop_strings:
   - "\n[Explanation"
   - "\n[Note"
   - "\n**"
+  - "\n```"
