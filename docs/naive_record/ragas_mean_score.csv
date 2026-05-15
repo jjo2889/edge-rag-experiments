@@ -1,0 +1,2 @@
+temperature,top_p,max_new_tokens,mean_faithfulness,mean_answer_relevancy,mean_context_precision,mean_context_recall
+0.1,0.95,128,0.4404761904761905,0.594267609860441,0.63499999995875,0.6653571428571429
