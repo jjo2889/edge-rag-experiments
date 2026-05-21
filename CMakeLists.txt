@@ -97,3 +97,14 @@ set_target_properties(rag_ingest PROPERTIES BUILD_RPATH "${RAG_LOCAL_RPATH}")
 add_executable(rag_query apps/query_main.cpp)
 target_link_libraries(rag_query PRIVATE rag_core)
 set_target_properties(rag_query PROPERTIES BUILD_RPATH "${RAG_LOCAL_RPATH}")
+
+option(BUILD_RAG_HTTP_SERVER "Build rag_http_server" OFF)
+
+if(BUILD_RAG_HTTP_SERVER)
+  add_executable(rag_http_server server/src/http_server_main.cpp)
+  target_include_directories(rag_http_server PRIVATE
+    "${CMAKE_SOURCE_DIR}/server/include"
+    "${CMAKE_SOURCE_DIR}/server/third_party/cpp-httplib"
+    "${LLAMA_CPP_ROOT}/vendor")
+  set_target_properties(rag_http_server PROPERTIES BUILD_RPATH "${RAG_LOCAL_RPATH}")
+endif()
