@@ -146,7 +146,7 @@ source scripts/activate_env.sh
 scripts/check_env.sh
 ```
 
-## 7) 빌드/실행
+## 7) 빌드와 기본 확인
 
 ```bash
 cmake -S . -B build
@@ -156,17 +156,20 @@ cmake --build build -j
 ./build/rag_query  --model_config configs/model.yaml --retrieval_config configs/retrieval.yaml --question "What is this corpus about?"
 ```
 
-BEIR 예시:
+SciFact/NQ/HTTP 실행 예시는 `README.md`를 본다.
+HTTP 서버는 선택 빌드 타깃이므로 필요할 때 `-DBUILD_RAG_HTTP_SERVER=ON`을 지정한다.
 
-```bash
-./build/rag_ingest --model_config configs/model.yaml --retrieval_config configs/retrieval_scifact.yaml
-./build/rag_query  --model_config configs/model.yaml --retrieval_config configs/retrieval_scifact.yaml --question "0-dimensional biomaterials lack inductive properties."
+## 8) 프롬프트, 재빌드, ingest 재사용
 
-./build/rag_ingest --model_config configs/model.yaml --retrieval_config configs/retrieval_nq.yaml
-./build/rag_query  --model_config configs/model.yaml --retrieval_config configs/retrieval_nq.yaml --question "What is the capital of France?"
-```
+- 시스템 프롬프트는 `configs/model.yaml`의 `prompt_system_path`에서 읽는다.
+- `configs/prompt_system.txt`만 바꾸면 재빌드가 필요 없다. 다음 `rag_query` 실행부터 반영된다.
+- `src/prompt_builder.cpp`를 바꾸면 C++ 코드 변경이므로 `rag_query` 재빌드가 필요하다.
+- SciFact와 QA/NQ는 시스템 프롬프트와 prompt body 형식을 각각 맞춰야 한다.
+- 프롬프트 변경은 ingest 결과를 바꾸지 않는다.
+- corpus, `retrieval_config.data_dir`, chunk 설정, 임베딩 모델이 그대로면 기존 `index_path`와 `chunk_store_path`를 재사용해도 된다.
+- 실험 기록에는 config 경로, 프롬프트 내용/해시, prompt body 형식, ingest 재사용 여부를 남긴다.
 
-## 8) 생성 길이 설정 주의사항
+## 9) 생성 길이 설정 주의사항
 
 - `model.yaml`에서 생성 길이는 `max_new_tokens`만 사용
 - `max_tokens`는 의도적으로 미지원이며, 설정 시 프로그램이 시작 단계에서 오류를 발생시킴

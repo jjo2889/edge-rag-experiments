@@ -42,7 +42,7 @@ cmake --build build -j
 ## Query 실행
 - NQ는 /retrieval_scifact.yaml 대신 /retrieval_nq.yaml 사용
 
-### 단일 질의 (권장)
+### 단일 질의
 
 구조화 입력(JSON):
 
@@ -82,34 +82,37 @@ cmake --build build -j
 규칙:
 - `--output_jsonl` 배치 모드와 `--request_json`/`--question` 단일 모드는 동시에 사용할 수 없음
 
-### 다른 코퍼스 추가
+### HTTP 서버
 
-- `rag_ingest`는 `retrieval_config.data_dir` 아래의 `.txt`, `.md`, `.jsonl`을 읽음
-- BEIR처럼 `queries.jsonl`, `qrels/`가 같이 있는 루트는 그대로 ingest하지 말고 corpus-only 디렉터리를 사용
-- 새 retrieval config는 기존 `configs/retrieval_scifact.yaml` 또는 `configs/retrieval_nq.yaml`를 복사해서 시작
-- JSONL 문서는 `_id`/`id`, `title`(선택), `text`/`contents`/`body` 중 하나를 가지면 됨
-
-### BEIR 데이터셋 예시
+HTTP 서버는 선택 빌드 타깃이다.
 
 ```bash
-scripts/setup_scifact_data.sh
-scripts/setup_nq_data.sh
+cmake -S . -B build -DBUILD_RAG_HTTP_SERVER=ON
+cmake --build build --target rag_http_server -j
+
+./build/rag_http_server \
+  --host 127.0.0.1 \
+  --port 8080 \
+  --rag_query ./build/rag_query \
+  --workdir . \
+  --model_config configs/model.yaml \
+  --retrieval_config configs/retrieval_nq.yaml
 ```
 
-- SciFact ingest: `data/beir/scifact_corpus/corpus.jsonl`
-- SciFact eval: `data/beir/scifact/queries.jsonl`, `data/beir/scifact/qrels/test.tsv`
-- NQ ingest: `data/beir/nq_corpus/corpus.jsonl`
-- NQ eval: `data/beir/nq/queries.jsonl`, `data/beir/nq/qrels/test.tsv`
+요청 예시:
 
 ```bash
-scripts/setup_nq_data.sh --full --force
+curl -X POST http://127.0.0.1:8080/query \
+  -H "Content-Type: application/json" \
+  -d '{"question":"Result of 2017 American League Championship Series?"}'
 ```
 
-주의:
-- `rag_ingest`는 `configs/retrieval_<dataset>.yaml`의 `data_dir`를 읽음
+서버는 요청마다 내부적으로 `rag_query --request_json ...`를 실행한다.
+
+### 데이터/코퍼스
+
+- 준비 절차와 경로 정책은 `docs/SETUP.md` 기준
 - BEIR 루트는 ingest하지 말고 `<dataset>_corpus` 경로를 사용
-- 기본 `setup_nq_data.sh`는 고정 subset 생성
-- `--full`일 때만 전체 추출
 - `--output_jsonl` batch export는 BEIR `queries.jsonl`, `qrels/*.tsv`, `corpus.jsonl` 입력을 사용
 
 ## 출력 정책
@@ -125,6 +128,8 @@ scripts/setup_nq_data.sh --full --force
 
 - 생성 길이 제어 키는 `max_new_tokens`만 지원 (`max_tokens` 미지원)
 - 시스템 프롬프트는 `configs/model.yaml`의 `prompt_system_path`로 로드
+- `prompt_system_path` 파일만 바꾸면 재빌드 없이 다음 실행부터 반영
+- `src/prompt_builder.cpp`를 바꾸면 `rag_query` 재빌드 필요
 - `use_model_chat_template`는 기본 비활성화. 일부 GGUF instruction 모델은 켰을 때 빈 응답(EOG) 회귀가 생길 수 있어 opt-in 사용 권장
 - 필요 시 `stop_strings`로 프롬프트 재생산/반복 출력을 조기 종료
 - BEIR batch export의 `reference`는 qrels positive 문서(`title + "\n" + text`) 결합 정책 사용
