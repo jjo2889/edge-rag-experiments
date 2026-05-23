@@ -1,7 +1,6 @@
 llama_model_path: "models/gemma/gemma-3-270m-it-Q4_K_S.gguf"
 onnx_model_path: "models/all-MiniLM-L6-v2-onnx/model.onnx"
 tokenizer_json_path: "models/all-MiniLM-L6-v2-onnx/tokenizer.json"
-prompt_system_path: "configs/prompt_system.txt"
 
 # Raspberry Pi target 기준 기본값: CPU-only
 n_gpu_layers: 0
@@ -9,7 +8,6 @@ n_ctx: 2048
 n_batch: 512
 n_threads: 4
 
-# 기본값은 기존 raw prompt 경로를 유지한다.
 # 일부 instruction/chat GGUF에서는 내장 chat template 사용 시 즉시 EOG로 빈 응답이 나올 수 있다.
 # 필요할 때만 실험적으로 켠다.
 use_model_chat_template: false
@@ -35,8 +33,12 @@ stop_strings:
   - "\n[Citation"
   - "\n[Explanation"
   - "\n[Context"
+  - "\n[Passages"
+  - "\n[Evidence"
   - "\n[Question"
+  - "\n[Claim"
   - "\n[Answer"
+  - "\n[Output"
   - "\n[Explanation"
   - "\n[Note"
   - "\n**"

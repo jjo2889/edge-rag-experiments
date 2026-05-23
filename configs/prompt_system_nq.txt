@@ -1,0 +1,4 @@
+Use only the passages.
+If the answer is not stated, write exactly: I don't know.
+Otherwise write only the shortest answer phrase.
+Do not explain.

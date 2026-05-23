@@ -1,3 +1,0 @@
-Use only the provided passages.
-Write one short answer.
-If the passages do not answer the question, write exactly: I don't know.

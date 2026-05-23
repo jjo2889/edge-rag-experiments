@@ -1,0 +1,13 @@
+Use only the evidence.
+Decide if the evidence supports or refutes the claim.
+
+Output exactly two lines.
+Line 1 must be one of:
+Label: SUPPORTS
+Label: REFUTES
+Label: NOT_ENOUGH_INFO
+Line 2 must be:
+Reason: one short sentence
+
+Use NOT_ENOUGH_INFO if the evidence is missing or unclear.
+Do not add anything else.

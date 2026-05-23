@@ -51,11 +51,15 @@ nlohmann::json buildRetrievalConfigJson(const RetrievalConfig& retrieval_cfg) {
   return retrieval;
 }
 
-nlohmann::json buildPromptConfigJson(const ModelConfig& model_cfg) {
+nlohmann::json buildPromptConfigJson(const ModelConfig& model_cfg, const RetrievalConfig& retrieval_cfg) {
   nlohmann::json prompt;
   prompt["system_prompt_path"] = nullableString(model_cfg.prompt_system_path);
   prompt["use_model_chat_template"] = model_cfg.use_model_chat_template;
-  prompt["prompt_builder"] = "builtin_context_question_answer";
+  prompt["prompt_builder"] = "configurable_sectioned";
+  prompt["context_section"] = retrieval_cfg.prompt.context_section;
+  prompt["context_item_label"] = retrieval_cfg.prompt.context_item_label;
+  prompt["query_section"] = retrieval_cfg.prompt.query_section;
+  prompt["output_section"] = retrieval_cfg.prompt.output_section;
   return prompt;
 }
 
@@ -140,7 +144,7 @@ nlohmann::json buildRunConfigJson(const ModelConfig& model_cfg,
   run_config["retrieval_config_path"] = nullableString(retrieval_config_path);
   run_config["generation"] = buildGenerationConfigJson(model_cfg);
   run_config["retrieval"] = buildRetrievalConfigJson(retrieval_cfg);
-  run_config["prompt"] = buildPromptConfigJson(model_cfg);
+  run_config["prompt"] = buildPromptConfigJson(model_cfg, retrieval_cfg);
   return run_config;
 }
 

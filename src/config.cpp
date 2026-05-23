@@ -31,6 +31,20 @@ void rejectUnsupportedModelConfigKeys(const YAML::Node& node) {
   }
 }
 
+PromptConfig readPromptConfig(const YAML::Node& node, const PromptConfig& default_value) {
+  PromptConfig cfg = default_value;
+  if (!node) {
+    return cfg;
+  }
+
+  cfg.system_prompt_path = readOrDefault<std::string>(node, "system_prompt_path", cfg.system_prompt_path);
+  cfg.context_section = readOrDefault<std::string>(node, "context_section", cfg.context_section);
+  cfg.context_item_label = readOrDefault<std::string>(node, "context_item_label", cfg.context_item_label);
+  cfg.query_section = readOrDefault<std::string>(node, "query_section", cfg.query_section);
+  cfg.output_section = readOrDefault<std::string>(node, "output_section", cfg.output_section);
+  return cfg;
+}
+
 }  // namespace
 
 ModelConfig ConfigLoader::loadModelConfig(const std::string& path) {
@@ -74,6 +88,7 @@ RetrievalConfig ConfigLoader::loadRetrievalConfig(const std::string& path) {
   cfg.chunk_size = readOrDefault<int>(root, "chunk_size", cfg.chunk_size);
   cfg.chunk_overlap = readOrDefault<int>(root, "chunk_overlap", cfg.chunk_overlap);
   cfg.top_k = readOrDefault<int>(root, "top_k", cfg.top_k);
+  cfg.prompt = readPromptConfig(root["prompt"], cfg.prompt);
 
   return cfg;
 }

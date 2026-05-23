@@ -10,7 +10,7 @@ struct ModelConfig {
   std::string llama_model_path;
   std::string onnx_model_path;
   std::string tokenizer_json_path;
-  std::string prompt_system_path = "configs/prompt_system.txt";
+  std::string prompt_system_path;
 
   int n_gpu_layers = 0;
   int n_ctx = 2048;
@@ -31,6 +31,14 @@ struct ModelConfig {
   std::vector<std::string> stop_strings;
 };
 
+struct PromptConfig {
+  std::string system_prompt_path;
+  std::string context_section = "Context";
+  std::string context_item_label = "Chunk";
+  std::string query_section = "Question";
+  std::string output_section = "Answer";
+};
+
 struct RetrievalConfig {
   std::string data_dir = "data/raw";
   std::string index_path = "data/indexes/faiss.index";
@@ -39,6 +47,7 @@ struct RetrievalConfig {
   int chunk_size = 256;
   int chunk_overlap = 32;
   int top_k = 3;
+  PromptConfig prompt;
 };
 
 class ConfigLoader {

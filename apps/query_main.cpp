@@ -200,6 +200,13 @@ int main(int argc, char** argv) {
 
     rag::ModelConfig model_cfg = rag::ConfigLoader::loadModelConfig(cli.common.model_config_path);
     rag::RetrievalConfig retrieval_cfg = rag::ConfigLoader::loadRetrievalConfig(cli.common.retrieval_config_path);
+    if (!retrieval_cfg.prompt.system_prompt_path.empty()) {
+      model_cfg.prompt_system_path = retrieval_cfg.prompt.system_prompt_path;
+    }
+    if (model_cfg.prompt_system_path.empty()) {
+      throw std::runtime_error(
+          "Missing system prompt path. Set prompt_system_path in model config or prompt.system_prompt_path in retrieval config.");
+    }
 
     std::cerr << "[trace] model_config_path=" << cli.common.model_config_path << '\n';
     std::cerr << "[trace] retrieval_config_path=" << cli.common.retrieval_config_path << '\n';
@@ -218,7 +225,7 @@ int main(int argc, char** argv) {
 
     rag::EmbeddingModel embedding_model(model_cfg.onnx_model_path, model_cfg.tokenizer_json_path);
     rag::Retriever retriever(embedding_model, std::move(index), std::move(chunks));
-    rag::PromptBuilder prompt_builder;
+    rag::PromptBuilder prompt_builder(retrieval_cfg.prompt);
     rag::Generator generator(model_cfg);
     rag::RagPipeline pipeline(retriever, prompt_builder, generator, retrieval_cfg.top_k);
 

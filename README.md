@@ -127,9 +127,11 @@ curl -X POST http://127.0.0.1:8080/query \
 ## 실험 고정 정책
 
 - 생성 길이 제어 키는 `max_new_tokens`만 지원 (`max_tokens` 미지원)
-- 시스템 프롬프트는 `configs/model.yaml`의 `prompt_system_path`로 로드
+- 시스템 프롬프트는 보통 `configs/retrieval_*.yaml`의 `prompt.system_prompt_path`로 선택
+- `configs/model.yaml`의 `prompt_system_path`는 retrieval config에 prompt 경로가 없을 때만 fallback으로 사용
+- prompt body 형식은 `configs/retrieval_*.yaml`의 `prompt` 블록으로 설정
 - `prompt_system_path` 파일만 바꾸면 재빌드 없이 다음 실행부터 반영
-- `src/prompt_builder.cpp`를 바꾸면 `rag_query` 재빌드 필요
+- `src/prompt_builder.cpp`의 조립 로직 자체를 바꾸면 `rag_query` 재빌드 필요
 - `use_model_chat_template`는 기본 비활성화. 일부 GGUF instruction 모델은 켰을 때 빈 응답(EOG) 회귀가 생길 수 있어 opt-in 사용 권장
 - 필요 시 `stop_strings`로 프롬프트 재생산/반복 출력을 조기 종료
 - BEIR batch export의 `reference`는 qrels positive 문서(`title + "\n" + text`) 결합 정책 사용

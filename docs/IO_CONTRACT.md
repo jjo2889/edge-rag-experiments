@@ -170,6 +170,10 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
 - `system_prompt_path`
 - `use_model_chat_template`
 - `prompt_builder`
+- `context_section`
+- `context_item_label`
+- `query_section`
+- `output_section`
 
 `trace` 구조는 Trace 섹션을 따른다.
 
@@ -221,9 +225,13 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
       "chunk_store_path": "data/indexes/scifact/chunks.jsonl"
     },
     "prompt": {
-      "system_prompt_path": "configs/prompt_system.txt",
+      "system_prompt_path": "configs/prompt_system_scifact.txt",
       "use_model_chat_template": false,
-      "prompt_builder": "builtin_context_question_answer"
+      "prompt_builder": "configurable_sectioned",
+      "context_section": "Evidence",
+      "context_item_label": "Evidence",
+      "query_section": "Claim",
+      "output_section": "Output"
     }
   },
   "trace": {
