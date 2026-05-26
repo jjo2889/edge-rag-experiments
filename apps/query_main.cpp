@@ -200,12 +200,9 @@ int main(int argc, char** argv) {
 
     rag::ModelConfig model_cfg = rag::ConfigLoader::loadModelConfig(cli.common.model_config_path);
     rag::RetrievalConfig retrieval_cfg = rag::ConfigLoader::loadRetrievalConfig(cli.common.retrieval_config_path);
-    if (!retrieval_cfg.prompt.system_prompt_path.empty()) {
-      model_cfg.prompt_system_path = retrieval_cfg.prompt.system_prompt_path;
-    }
+    model_cfg.prompt_system_path = retrieval_cfg.prompt.system_prompt_path;
     if (model_cfg.prompt_system_path.empty()) {
-      throw std::runtime_error(
-          "Missing system prompt path. Set prompt_system_path in model config or prompt.system_prompt_path in retrieval config.");
+      throw std::runtime_error("Missing required config key: prompt.system_prompt_path");
     }
 
     std::cerr << "[trace] model_config_path=" << cli.common.model_config_path << '\n';

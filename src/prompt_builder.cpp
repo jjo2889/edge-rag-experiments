@@ -18,6 +18,7 @@ std::string PromptBuilder::buildPrompt(const std::string& query, const std::vect
 
   oss << "[" << config_.query_section << "]\n" << query << "\n\n";
   oss << "[" << config_.output_section << "]\n";
+
   return oss.str();
 }
 

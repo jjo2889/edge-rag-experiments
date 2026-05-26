@@ -10,7 +10,7 @@ namespace rag {
 
 class PromptBuilder {
  public:
-  explicit PromptBuilder(PromptConfig config = PromptConfig{});
+  explicit PromptBuilder(PromptConfig config);
 
   std::string buildPrompt(const std::string& query, const std::vector<RetrievedChunk>& contexts) const;
 

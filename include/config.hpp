@@ -12,41 +12,41 @@ struct ModelConfig {
   std::string tokenizer_json_path;
   std::string prompt_system_path;
 
-  int n_gpu_layers = 0;
-  int n_ctx = 2048;
-  int n_batch = 512;
-  int n_threads = 4;
+  int n_gpu_layers;
+  int n_ctx;
+  int n_batch;
+  int n_threads;
 
   // Generation length control key in YAML: max_new_tokens (max_tokens is unsupported).
-  int max_new_tokens = 160;
-  float temperature = 0.2F;
-  int top_k = 40;
-  float top_p = 0.9F;
-  uint32_t seed = 42;
-  float repetition_penalty = 1.1F;
-  int repetition_penalty_last_n = 64;
+  int max_new_tokens;
+  float temperature;
+  int top_k;
+  float top_p;
+  uint32_t seed;
+  float repetition_penalty;
+  int repetition_penalty_last_n;
 
   // Optional generation guards for instruction/chat models.
-  bool use_model_chat_template = false;
+  bool use_model_chat_template;
   std::vector<std::string> stop_strings;
 };
 
 struct PromptConfig {
   std::string system_prompt_path;
-  std::string context_section = "Context";
-  std::string context_item_label = "Chunk";
-  std::string query_section = "Question";
-  std::string output_section = "Answer";
+  std::string context_section;
+  std::string context_item_label;
+  std::string query_section;
+  std::string output_section;
 };
 
 struct RetrievalConfig {
-  std::string data_dir = "data/raw";
-  std::string index_path = "data/indexes/faiss.index";
-  std::string chunk_store_path = "data/indexes/chunks.jsonl";
+  std::string data_dir;
+  std::string index_path;
+  std::string chunk_store_path;
 
-  int chunk_size = 256;
-  int chunk_overlap = 32;
-  int top_k = 3;
+  int chunk_size;
+  int chunk_overlap;
+  int top_k;
   PromptConfig prompt;
 };
 

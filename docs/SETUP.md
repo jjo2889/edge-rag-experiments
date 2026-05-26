@@ -161,9 +161,9 @@ HTTP 서버는 선택 빌드 타깃이므로 필요할 때 `-DBUILD_RAG_HTTP_SER
 
 ## 8) 프롬프트, 재빌드, ingest 재사용
 
-- 시스템 프롬프트는 보통 `configs/retrieval_*.yaml`의 `prompt.system_prompt_path`에서 읽는다.
-- `configs/model.yaml`의 `prompt_system_path`는 retrieval config에 prompt 경로가 없을 때만 fallback으로 사용한다.
+- 시스템 프롬프트는 `configs/retrieval_*.yaml`의 `prompt.system_prompt_path`에서 읽는다.
 - prompt body 형식은 `configs/retrieval_*.yaml`의 `prompt` 블록으로 설정한다.
+- `configs/model.yaml`, `configs/retrieval_*.yaml`의 실험 설정 키는 명시 필수다.
 - 프롬프트 파일이나 retrieval config의 prompt 블록만 바꾸면 재빌드가 필요 없다.
 - `src/prompt_builder.cpp`의 조립 로직 자체를 바꾸면 `rag_query` 재빌드가 필요하다.
 - 프롬프트 변경은 ingest 결과를 바꾸지 않는다.
