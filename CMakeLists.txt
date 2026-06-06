@@ -61,6 +61,7 @@ set(RAG_CORE_SOURCES
   src/embedding_model.cpp
   src/faiss_index.cpp
   src/retriever.cpp
+  src/reranker.cpp
   src/prompt_builder.cpp
   src/generator.cpp
   src/rag_pipeline.cpp

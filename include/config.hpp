@@ -47,6 +47,7 @@ struct RetrievalConfig {
   int chunk_size;
   int chunk_overlap;
   int top_k;
+  int rerank_candidate_k;
   PromptConfig prompt;
 };
 

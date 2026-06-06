@@ -16,6 +16,14 @@ T readRequired(const YAML::Node& node, const char* key) {
   return node[key].as<T>();
 }
 
+template <typename T>
+T readOptional(const YAML::Node& node, const char* key, const T& fallback) {
+  if (!node[key]) {
+    return fallback;
+  }
+  return node[key].as<T>();
+}
+
 void rejectUnsupportedModelConfigKeys(const YAML::Node& node) {
   if (node["max_tokens"]) {
     throw std::runtime_error(
@@ -80,6 +88,7 @@ RetrievalConfig ConfigLoader::loadRetrievalConfig(const std::string& path) {
   cfg.chunk_size = readRequired<int>(root, "chunk_size");
   cfg.chunk_overlap = readRequired<int>(root, "chunk_overlap");
   cfg.top_k = readRequired<int>(root, "top_k");
+  cfg.rerank_candidate_k = readOptional<int>(root, "rerank_candidate_k", cfg.top_k * 3);
   cfg.prompt = readPromptConfig(root["prompt"]);
 
   return cfg;

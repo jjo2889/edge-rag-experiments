@@ -23,6 +23,8 @@ struct Chunk {
 struct RetrievedChunk {
   Chunk chunk;
   float score = 0.0F;
+  float rerank_score = 0.0F;
+  bool has_rerank_score = false;
 };
 
 struct RagResult {
