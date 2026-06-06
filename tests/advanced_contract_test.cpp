@@ -3,9 +3,11 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "advanced_mode.hpp"
 #include "query_request_io.hpp"
+#include "reranker.hpp"
 
 namespace {
 
@@ -84,6 +86,36 @@ void testRequestRejectsInvalidAdvancedMode() {
   require(threw, "invalid advanced request field must throw");
 }
 
+rag::RetrievedChunk makeCandidate(int64_t chunk_id, const std::string& text, float dense_score) {
+  rag::RetrievedChunk candidate;
+  candidate.chunk.chunk_id = chunk_id;
+  candidate.chunk.doc_id = "doc-" + std::to_string(chunk_id);
+  candidate.chunk.text = text;
+  candidate.score = dense_score;
+  return candidate;
+}
+
+void testRerankByLexicalOverlap() {
+  const std::vector<rag::RetrievedChunk> candidates = {
+      makeCandidate(1, "unrelated cooking recipe", 0.95F),
+      makeCandidate(2, "biomaterials show inductive properties", 0.60F),
+      makeCandidate(3, "inductive biomaterials evidence", 0.50F),
+  };
+
+  const std::vector<rag::RetrievedChunk> reranked =
+      rag::rerankByLexicalOverlap("Do biomaterials show inductive properties?", candidates, 2);
+
+  require(reranked.size() == 2, "rerank must return top_k candidates");
+  require(reranked.front().chunk.chunk_id == 2, "rerank should prefer strongest lexical overlap");
+  require(reranked.front().has_rerank_score, "reranked result must mark rerank score");
+  require(reranked.front().rerank_score > reranked.back().rerank_score, "rerank scores must be ordered");
+}
+
+void testRerankZeroTopK() {
+  const std::vector<rag::RetrievedChunk> candidates = {makeCandidate(1, "text", 0.1F)};
+  require(rag::rerankByLexicalOverlap("text", candidates, 0).empty(), "top_k <= 0 must return empty rerank");
+}
+
 }  // namespace
 
 int main() {
@@ -91,5 +123,7 @@ int main() {
   testRequestDefaultAdvancedMode();
   testRequestAdvancedMode();
   testRequestRejectsInvalidAdvancedMode();
+  testRerankByLexicalOverlap();
+  testRerankZeroTopK();
   return 0;
 }
