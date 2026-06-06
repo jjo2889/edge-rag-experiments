@@ -87,6 +87,7 @@ JSON 파일에서 질문과 샘플 식별 정보를 읽어 실행한다.
 | `dataset` | 선택 | string | 데이터셋 이름 |
 | `split` | 선택 | string | 데이터셋 분할 이름 |
 | `sample_id` | 선택 | string | 샘플 ID |
+| `advanced` | 선택 | string | Advanced RAG mode. 기본값은 `none` |
 
 예시:
 
@@ -95,11 +96,13 @@ JSON 파일에서 질문과 샘플 식별 정보를 읽어 실행한다.
   "dataset": "scifact",
   "split": "test",
   "sample_id": "1",
+  "advanced": "none",
   "question": "0-dimensional biomaterials lack inductive properties."
 }
 ```
 
 Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, sampling, 검색 top-k, 프롬프트 경로는 config 파일에서 지정한다.
+지원하는 `advanced` 값은 `none`, `query_rewrite`, `hyde`, `rerank`, `sentence_window`, `contextual_compression`이다.
 
 ### Output JSON
 

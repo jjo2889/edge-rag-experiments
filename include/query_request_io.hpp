@@ -2,6 +2,8 @@
 
 #include <string>
 
+#include "advanced_mode.hpp"
+
 namespace rag::query {
 
 struct QueryRequest {
@@ -10,6 +12,7 @@ struct QueryRequest {
   std::string split;
   std::string sample_id;
   std::string question;
+  AdvancedMode advanced = AdvancedMode::None;
 };
 
 QueryRequest loadRequestFromJson(const std::string& path);

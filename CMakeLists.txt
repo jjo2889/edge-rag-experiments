@@ -54,6 +54,7 @@ find_library(LLAMA_LIBRARY
   REQUIRED)
 
 set(RAG_CORE_SOURCES
+  src/advanced_mode.cpp
   src/config.cpp
   src/document_loader.cpp
   src/text_chunker.cpp
