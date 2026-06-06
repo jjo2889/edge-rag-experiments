@@ -5,6 +5,7 @@
 #include <string>
 
 #include "advanced_mode.hpp"
+#include "hyde_transformer.hpp"
 #include "query_request_io.hpp"
 
 namespace {
@@ -84,6 +85,25 @@ void testRequestRejectsInvalidAdvancedMode() {
   require(threw, "invalid advanced request field must throw");
 }
 
+void testHydePrompt() {
+  const std::string query = "Who invented the frisbee?";
+  const std::string prompt = rag::buildHydePrompt(query);
+  require(prompt.find(query) != std::string::npos, "HyDE prompt must include query");
+  require(prompt.find("[Hypothetical Document]") != std::string::npos, "HyDE prompt must request document");
+}
+
+void testHydeSanitizer() {
+  const rag::HydeTransformResult result = rag::sanitizeHydeDocument("  A short retrieval document.\n", "fallback");
+  require(!result.used_fallback, "valid HyDE document must not fallback");
+  require(result.document == "A short retrieval document.", "HyDE sanitizer trim failed");
+}
+
+void testHydeFallback() {
+  const rag::HydeTransformResult result = rag::sanitizeHydeDocument("\n \t", "fallback query");
+  require(result.used_fallback, "blank HyDE document must fallback");
+  require(result.document == "fallback query", "HyDE fallback text mismatch");
+}
+
 }  // namespace
 
 int main() {
@@ -91,5 +111,8 @@ int main() {
   testRequestDefaultAdvancedMode();
   testRequestAdvancedMode();
   testRequestRejectsInvalidAdvancedMode();
+  testHydePrompt();
+  testHydeSanitizer();
+  testHydeFallback();
   return 0;
 }
