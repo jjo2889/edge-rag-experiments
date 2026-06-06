@@ -12,7 +12,11 @@ namespace rag {
 
 class RagPipeline {
  public:
-  RagPipeline(const Retriever& retriever, const PromptBuilder& prompt_builder, const Generator& generator, int top_k);
+  RagPipeline(const Retriever& retriever,
+              const PromptBuilder& prompt_builder,
+              const Generator& generator,
+              int top_k,
+              int rerank_candidate_k);
 
   RagResult run(const std::string& query, AdvancedMode advanced = AdvancedMode::None) const;
 
@@ -21,6 +25,7 @@ class RagPipeline {
   const PromptBuilder* prompt_builder_;
   const Generator* generator_;
   int top_k_;
+  int rerank_candidate_k_;
 };
 
 }  // namespace rag

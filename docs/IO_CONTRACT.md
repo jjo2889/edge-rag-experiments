@@ -147,6 +147,7 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
 | `doc_id` | string | 원문 문서 ID |
 | `chunk_id` | integer | chunk store 내 chunk ID |
 | `score` | number | retriever 원점수. 검색 순서는 `rank`를 기준으로 해석한다. |
+| `rerank_score` | number | rerank 적용 시 reranker 점수 |
 | `text` | string | context text |
 
 `run_config`:
@@ -172,6 +173,7 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
 
 `retrieval`:
 - `top_k`
+- `rerank_candidate_k`
 - `chunk_size`
 - `chunk_overlap`
 - `data_dir`
@@ -234,6 +236,7 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
     },
     "retrieval": {
       "top_k": 3,
+      "rerank_candidate_k": 9,
       "chunk_size": 256,
       "chunk_overlap": 32,
       "data_dir": "data/beir/scifact_corpus",
@@ -388,11 +391,13 @@ qrels TSV 컬럼:
 | `qrel_doc_ids` | array[string] | positive qrels 문서 ID |
 | `retrieved_doc_ids` | array[string] | 검색된 문서 ID |
 | `retrieved_scores` | array[number] | retriever 원점수 |
+| `retrieved_rerank_scores` | array[number \| null] | rerank 적용 시 reranker 점수. 미적용 시 `null` |
 | `trace` | object | 샘플별 실행 trace |
 
 RAGAS 입력으로 직접 쓰는 필드는 `user_input`, `response`, `retrieved_contexts`, `reference`이다.
 배치 row의 `retrieved_contexts`는 RAGAS 입력 형식에 맞춘 string 배열이다. 검색 metadata는 `retrieved_ranks`, `retrieved_doc_ids`, `retrieved_scores`, `trace`에 분리해 기록한다.
 `retrieved_contexts`, `retrieved_ranks`, `retrieved_doc_ids`, `retrieved_scores`는 같은 길이의 배열이며, 같은 index가 같은 검색 결과를 의미한다.
+`retrieved_rerank_scores`도 같은 길이이며, rerank 미적용 row에서는 각 값이 `null`이다.
 
 prediction JSONL row 예시:
 
@@ -420,6 +425,9 @@ prediction JSONL row 예시:
   ],
   "retrieved_scores": [
     0.8123
+  ],
+  "retrieved_rerank_scores": [
+    null
   ],
   "trace": {
     "latency_ms": {

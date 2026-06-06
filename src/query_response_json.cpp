@@ -21,6 +21,9 @@ nlohmann::json buildRetrievedContexts(const RagResult& result) {
     row["doc_id"] = item.chunk.doc_id;
     row["chunk_id"] = item.chunk.chunk_id;
     row["score"] = item.score;
+    if (item.has_rerank_score) {
+      row["rerank_score"] = item.rerank_score;
+    }
     row["text"] = item.chunk.text;
     contexts.push_back(std::move(row));
   }
@@ -43,6 +46,7 @@ nlohmann::json buildGenerationConfigJson(const ModelConfig& model_cfg) {
 nlohmann::json buildRetrievalConfigJson(const RetrievalConfig& retrieval_cfg) {
   nlohmann::json retrieval;
   retrieval["top_k"] = retrieval_cfg.top_k;
+  retrieval["rerank_candidate_k"] = retrieval_cfg.rerank_candidate_k;
   retrieval["chunk_size"] = retrieval_cfg.chunk_size;
   retrieval["chunk_overlap"] = retrieval_cfg.chunk_overlap;
   retrieval["data_dir"] = retrieval_cfg.data_dir;

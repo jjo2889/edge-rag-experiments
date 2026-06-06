@@ -240,7 +240,7 @@ int main(int argc, char** argv) {
     rag::Retriever retriever(embedding_model, std::move(index), std::move(chunks));
     rag::PromptBuilder prompt_builder(retrieval_cfg.prompt);
     rag::Generator generator(model_cfg);
-    rag::RagPipeline pipeline(retriever, prompt_builder, generator, retrieval_cfg.top_k);
+    rag::RagPipeline pipeline(retriever, prompt_builder, generator, retrieval_cfg.top_k, retrieval_cfg.rerank_candidate_k);
 
     if (batch_mode) {
       const size_t rows_written =

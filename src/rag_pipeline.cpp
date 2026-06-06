@@ -3,20 +3,34 @@
 #include <algorithm>
 #include <chrono>
 
+#include "reranker.hpp"
+
 namespace rag {
 
 RagPipeline::RagPipeline(const Retriever& retriever,
                          const PromptBuilder& prompt_builder,
                          const Generator& generator,
-                         const int top_k)
-    : retriever_(&retriever), prompt_builder_(&prompt_builder), generator_(&generator), top_k_(std::max(1, top_k)) {}
+                         const int top_k,
+                         const int rerank_candidate_k)
+    : retriever_(&retriever),
+      prompt_builder_(&prompt_builder),
+      generator_(&generator),
+      top_k_(std::max(1, top_k)),
+      rerank_candidate_k_(std::max(std::max(1, top_k), rerank_candidate_k)) {}
 
 RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced) const {
   const auto total_start = std::chrono::steady_clock::now();
 
   const auto retrieve_start = std::chrono::steady_clock::now();
-  const std::vector<RetrievedChunk> contexts = retriever_->retrieve(query, top_k_);
+  const int retrieve_k = advanced == AdvancedMode::Rerank ? rerank_candidate_k_ : top_k_;
+  std::vector<RetrievedChunk> contexts = retriever_->retrieve(query, retrieve_k);
   const auto retrieve_end = std::chrono::steady_clock::now();
+
+  const auto rerank_start = std::chrono::steady_clock::now();
+  if (advanced == AdvancedMode::Rerank) {
+    contexts = rerankByLexicalOverlap(query, contexts, top_k_);
+  }
+  const auto rerank_end = std::chrono::steady_clock::now();
 
   const auto prompt_build_start = std::chrono::steady_clock::now();
   const std::string prompt_body = prompt_builder_->buildPrompt(query, contexts);
@@ -39,6 +53,7 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
   result.output_tokens = generation_trace.output_tokens;
   result.prompt_truncated = generation_trace.prompt_truncated;
   result.retrieve_ms = std::chrono::duration_cast<std::chrono::milliseconds>(retrieve_end - retrieve_start).count();
+  result.rerank_ms = std::chrono::duration_cast<std::chrono::milliseconds>(rerank_end - rerank_start).count();
   result.prompt_build_ms =
       std::chrono::duration_cast<std::chrono::milliseconds>(prompt_build_end - prompt_build_start).count();
   result.generate_ms = std::chrono::duration_cast<std::chrono::milliseconds>(generate_end - generate_start).count();
