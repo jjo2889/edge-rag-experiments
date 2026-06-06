@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <chrono>
 
+#include "contextual_compressor.hpp"
+
 namespace rag {
 
 RagPipeline::RagPipeline(const Retriever& retriever,
@@ -15,8 +17,16 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
   const auto total_start = std::chrono::steady_clock::now();
 
   const auto retrieve_start = std::chrono::steady_clock::now();
-  const std::vector<RetrievedChunk> contexts = retriever_->retrieve(query, top_k_);
+  std::vector<RetrievedChunk> contexts = retriever_->retrieve(query, top_k_);
   const auto retrieve_end = std::chrono::steady_clock::now();
+
+  const auto context_transform_start = std::chrono::steady_clock::now();
+  if (advanced == AdvancedMode::ContextualCompression) {
+    const GenerationTrace compression_trace =
+        generator_->generateWithTrace(buildContextualCompressionPrompt(query, contexts));
+    contexts = buildCompressedContexts(compression_trace.output_text, contexts).contexts;
+  }
+  const auto context_transform_end = std::chrono::steady_clock::now();
 
   const auto prompt_build_start = std::chrono::steady_clock::now();
   const std::string prompt_body = prompt_builder_->buildPrompt(query, contexts);
@@ -39,6 +49,8 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
   result.output_tokens = generation_trace.output_tokens;
   result.prompt_truncated = generation_trace.prompt_truncated;
   result.retrieve_ms = std::chrono::duration_cast<std::chrono::milliseconds>(retrieve_end - retrieve_start).count();
+  result.context_transform_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(context_transform_end - context_transform_start).count();
   result.prompt_build_ms =
       std::chrono::duration_cast<std::chrono::milliseconds>(prompt_build_end - prompt_build_start).count();
   result.generate_ms = std::chrono::duration_cast<std::chrono::milliseconds>(generate_end - generate_start).count();
