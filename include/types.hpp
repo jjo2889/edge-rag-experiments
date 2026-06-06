@@ -37,7 +37,10 @@ struct RagResult {
   int prompt_tokens = 0;
   int output_tokens = 0;
   bool prompt_truncated = false;
+  int64_t query_transform_ms = 0;
   int64_t retrieve_ms = 0;
+  int64_t rerank_ms = 0;
+  int64_t context_transform_ms = 0;
   int64_t prompt_build_ms = 0;
   int64_t generate_ms = 0;
   int64_t total_ms = 0;

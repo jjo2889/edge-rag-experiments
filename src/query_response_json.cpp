@@ -66,7 +66,10 @@ nlohmann::json buildPromptConfigJson(const ModelConfig& model_cfg, const Retriev
 nlohmann::json buildLatencyJson(const RagResult& result) {
   nlohmann::json latency_ms;
   latency_ms["total"] = result.total_ms;
+  latency_ms["query_transform"] = result.query_transform_ms;
   latency_ms["retrieval"] = result.retrieve_ms;
+  latency_ms["rerank"] = result.rerank_ms;
+  latency_ms["context_transform"] = result.context_transform_ms;
   latency_ms["prompt_build"] = result.prompt_build_ms;
   latency_ms["generation"] = result.generate_ms;
   return latency_ms;
@@ -75,7 +78,10 @@ nlohmann::json buildLatencyJson(const RagResult& result) {
 nlohmann::json buildEmptyLatencyJson() {
   nlohmann::json latency_ms;
   latency_ms["total"] = 0;
+  latency_ms["query_transform"] = 0;
   latency_ms["retrieval"] = 0;
+  latency_ms["rerank"] = 0;
+  latency_ms["context_transform"] = 0;
   latency_ms["prompt_build"] = 0;
   latency_ms["generation"] = 0;
   return latency_ms;
@@ -90,6 +96,7 @@ nlohmann::json buildEmptyTraceJson() {
   trace["prompt_tokens"] = 0;
   trace["output_tokens"] = 0;
   trace["prompt_truncated"] = false;
+  trace["retrieval_query"] = "";
   return trace;
 }
 
@@ -132,6 +139,7 @@ nlohmann::json buildTraceJson(const RagResult& result, const double memory_mb) {
   trace["prompt_tokens"] = result.prompt_tokens;
   trace["output_tokens"] = result.output_tokens;
   trace["prompt_truncated"] = result.prompt_truncated;
+  trace["retrieval_query"] = result.retrieval_query;
   return trace;
 }
 
@@ -162,6 +170,7 @@ nlohmann::json buildSingleRunSuccessJson(const QueryRequest& request,
   output["error"] = nullptr;
   output["mode"] = "naive_rag";
   output["advanced"] = advancedModeToString(request.advanced);
+  output["retrieval_query"] = result.retrieval_query;
   output["request"] = nlohmann::json{{"run_id", nullableString(request.run_id)},
                                      {"dataset", nullableString(request.dataset)},
                                      {"split", nullableString(request.split)},
@@ -182,6 +191,7 @@ nlohmann::json buildSingleRunErrorJson(const std::optional<QueryRequest>& reques
   output["error"] = nlohmann::json{{"message", message}};
   output["mode"] = "naive_rag";
   output["advanced"] = request ? advancedModeToString(request->advanced) : "none";
+  output["retrieval_query"] = nullptr;
   output["request"] = nlohmann::json{
       {"run_id", request ? nullableString(request->run_id) : nlohmann::json(nullptr)},
       {"dataset", request ? nullableString(request->dataset) : nlohmann::json(nullptr)},

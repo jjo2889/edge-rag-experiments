@@ -51,7 +51,10 @@
 | 필드 | 타입 | 의미 |
 |---|---|---|
 | `latency_ms.total` | integer | 검색 시작부터 생성 종료까지의 wall-clock 시간(ms) |
+| `latency_ms.query_transform` | integer | advanced query transform 시간(ms). 미사용 시 0 |
 | `latency_ms.retrieval` | integer | query embedding과 vector search 시간(ms) |
+| `latency_ms.rerank` | integer | rerank 시간(ms). 미사용 시 0 |
+| `latency_ms.context_transform` | integer | retrieved context 변환/압축/window 확장 시간(ms). 미사용 시 0 |
 | `latency_ms.prompt_build` | integer | retrieved context를 prompt body로 구성한 시간(ms) |
 | `latency_ms.generation` | integer | LLM 생성 시간(ms) |
 | `output_tokens_per_sec` | number | `output_tokens / generation elapsed seconds` |
@@ -60,6 +63,7 @@
 | `prompt_tokens` | integer | 실제 모델 입력에 사용된 prompt token 수 |
 | `output_tokens` | integer | 생성된 token 수 |
 | `prompt_truncated` | boolean | context window 제한으로 prompt가 잘렸는지 여부 |
+| `retrieval_query` | string | 검색에 실제 사용한 query |
 
 ## 단일 실행
 
@@ -116,8 +120,10 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
 | `status` | string | `ok` 또는 `error` |
 | `error` | object \| null | 실패 메시지 |
 | `mode` | string | 출력 종류와 실행 경로를 구분하는 식별자 |
+| `advanced` | string | Advanced RAG mode |
 | `request` | object | 입력 질의와 샘플 식별 정보 |
 | `answer` | string | 모델 응답 |
+| `retrieval_query` | string \| null | 검색에 실제 사용한 query. 실패 시 `null` |
 | `retrieved_contexts` | array | 검색된 context 목록 |
 | `run_config` | object \| null | 실제 실행 설정 |
 | `trace` | object | latency, throughput, memory, token count, truncation 등 실행 관측값 |
@@ -192,6 +198,7 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
   "status": "ok",
   "error": null,
   "mode": "naive_rag",
+  "advanced": "none",
   "request": {
     "run_id": null,
     "dataset": "scifact",
@@ -201,6 +208,7 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
     "question": "0-dimensional biomaterials lack inductive properties."
   },
   "answer": "The retrieved evidence does not support the claim.",
+  "retrieval_query": "0-dimensional biomaterials lack inductive properties.",
   "retrieved_contexts": [
     {
       "rank": 1,
@@ -245,7 +253,10 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
   "trace": {
     "latency_ms": {
       "total": 1320,
+      "query_transform": 0,
       "retrieval": 24,
+      "rerank": 0,
+      "context_transform": 0,
       "prompt_build": 1,
       "generation": 1295
     },
@@ -254,7 +265,8 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
     "prompt_tokens_before_truncation": 680,
     "prompt_tokens": 680,
     "output_tokens": 16,
-    "prompt_truncated": false
+    "prompt_truncated": false,
+    "retrieval_query": "0-dimensional biomaterials lack inductive properties."
   }
 }
 ```
@@ -268,11 +280,14 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
     "message": "Request field question must not be blank."
   },
   "mode": "naive_rag",
+  "advanced": "none",
+  "retrieval_query": null,
   "request": {
     "run_id": null,
     "dataset": null,
     "split": null,
     "sample_id": null,
+    "advanced": "none",
     "question": ""
   },
   "answer": "",
@@ -281,7 +296,10 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
   "trace": {
     "latency_ms": {
       "total": 0,
+      "query_transform": 0,
       "retrieval": 0,
+      "rerank": 0,
+      "context_transform": 0,
       "prompt_build": 0,
       "generation": 0
     },
@@ -290,7 +308,8 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
     "prompt_tokens_before_truncation": 0,
     "prompt_tokens": 0,
     "output_tokens": 0,
-    "prompt_truncated": false
+    "prompt_truncated": false,
+    "retrieval_query": ""
   }
 }
 ```
@@ -361,6 +380,7 @@ qrels TSV 컬럼:
 | `split` | string | 데이터셋 분할 이름 |
 | `advanced` | string | Advanced RAG mode |
 | `user_input` | string | RAGAS `user_input` |
+| `retrieval_query` | string | 검색에 실제 사용한 query |
 | `response` | string | RAGAS `response` |
 | `retrieved_contexts` | array[string] | RAGAS `retrieved_contexts` |
 | `reference` | string | RAGAS `reference` |
@@ -383,6 +403,7 @@ prediction JSONL row 예시:
   "split": "test",
   "advanced": "none",
   "user_input": "0-dimensional biomaterials lack inductive properties.",
+  "retrieval_query": "0-dimensional biomaterials lack inductive properties.",
   "response": "The retrieved evidence does not support the claim.",
   "retrieved_contexts": [
     "..."
@@ -403,7 +424,10 @@ prediction JSONL row 예시:
   "trace": {
     "latency_ms": {
       "total": 1320,
+      "query_transform": 0,
       "retrieval": 24,
+      "rerank": 0,
+      "context_transform": 0,
       "prompt_build": 1,
       "generation": 1295
     },
@@ -412,7 +436,8 @@ prediction JSONL row 예시:
     "prompt_tokens_before_truncation": 680,
     "prompt_tokens": 680,
     "output_tokens": 16,
-    "prompt_truncated": false
+    "prompt_truncated": false,
+    "retrieval_query": "0-dimensional biomaterials lack inductive properties."
   }
 }
 ```

@@ -247,6 +247,7 @@ nlohmann::json buildPredictionRow(const std::string& sample_id,
   row["split"] = split;
   row["advanced"] = advancedModeToString(result.advanced_mode);
   row["user_input"] = user_input;
+  row["retrieval_query"] = result.retrieval_query;
   row["response"] = result.answer;
   row["retrieved_contexts"] = retrieved_contexts;
   row["reference"] = reference;
