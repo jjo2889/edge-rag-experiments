@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <chrono>
 
+#include "hyde_transformer.hpp"
+
 namespace rag {
 
 RagPipeline::RagPipeline(const Retriever& retriever,
@@ -14,8 +16,16 @@ RagPipeline::RagPipeline(const Retriever& retriever,
 RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced) const {
   const auto total_start = std::chrono::steady_clock::now();
 
+  const auto query_transform_start = std::chrono::steady_clock::now();
+  std::string retrieval_query = query;
+  if (advanced == AdvancedMode::Hyde) {
+    const GenerationTrace hyde_trace = generator_->generateWithTrace(buildHydePrompt(query));
+    retrieval_query = sanitizeHydeDocument(hyde_trace.output_text, query).document;
+  }
+  const auto query_transform_end = std::chrono::steady_clock::now();
+
   const auto retrieve_start = std::chrono::steady_clock::now();
-  const std::vector<RetrievedChunk> contexts = retriever_->retrieve(query, top_k_);
+  const std::vector<RetrievedChunk> contexts = retriever_->retrieve(retrieval_query, top_k_);
   const auto retrieve_end = std::chrono::steady_clock::now();
 
   const auto prompt_build_start = std::chrono::steady_clock::now();
@@ -29,7 +39,7 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
   RagResult result;
   result.advanced_mode = advanced;
   result.original_query = query;
-  result.retrieval_query = query;
+  result.retrieval_query = retrieval_query;
   result.prompt_body = generation_trace.prompt_body;
   result.final_prompt = generation_trace.final_prompt;
   result.prompt = generation_trace.final_prompt;
@@ -38,6 +48,8 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
   result.prompt_tokens = generation_trace.prompt_tokens;
   result.output_tokens = generation_trace.output_tokens;
   result.prompt_truncated = generation_trace.prompt_truncated;
+  result.query_transform_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(query_transform_end - query_transform_start).count();
   result.retrieve_ms = std::chrono::duration_cast<std::chrono::milliseconds>(retrieve_end - retrieve_start).count();
   result.prompt_build_ms =
       std::chrono::duration_cast<std::chrono::milliseconds>(prompt_build_end - prompt_build_start).count();
