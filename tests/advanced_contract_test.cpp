@@ -3,8 +3,10 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "advanced_mode.hpp"
+#include "contextual_compressor.hpp"
 #include "query_request_io.hpp"
 
 namespace {
@@ -84,6 +86,40 @@ void testRequestRejectsInvalidAdvancedMode() {
   require(threw, "invalid advanced request field must throw");
 }
 
+std::vector<rag::RetrievedChunk> sampleContexts() {
+  rag::RetrievedChunk context;
+  context.chunk.chunk_id = 7;
+  context.chunk.doc_id = "doc-1";
+  context.chunk.text = "The retrieved evidence says the material is inductive.";
+  context.score = 0.75F;
+  return {context};
+}
+
+void testCompressionPrompt() {
+  const auto contexts = sampleContexts();
+  const std::string prompt = rag::buildContextualCompressionPrompt("Is the material inductive?", contexts);
+  require(prompt.find("Is the material inductive?") != std::string::npos, "compression prompt must include query");
+  require(prompt.find(contexts.front().chunk.text) != std::string::npos, "compression prompt must include context");
+}
+
+void testCompressedContext() {
+  const auto contexts = sampleContexts();
+  const rag::ContextCompressionResult result = rag::buildCompressedContexts("  Relevant evidence only.  ", contexts);
+  require(!result.used_fallback, "valid compression must not fallback");
+  require(result.contexts.size() == 1, "compressed context should be a single context");
+  require(result.contexts.front().chunk.doc_id == "compressed", "compressed context doc_id mismatch");
+  require(result.contexts.front().chunk.chunk_id == -1, "compressed context chunk_id mismatch");
+  require(result.contexts.front().chunk.text == "Relevant evidence only.", "compressed context trim failed");
+}
+
+void testCompressionFallback() {
+  const auto contexts = sampleContexts();
+  const rag::ContextCompressionResult result = rag::buildCompressedContexts(" \n\t", contexts);
+  require(result.used_fallback, "blank compression must fallback");
+  require(result.contexts.size() == contexts.size(), "fallback contexts size mismatch");
+  require(result.contexts.front().chunk.doc_id == "doc-1", "fallback context metadata mismatch");
+}
+
 }  // namespace
 
 int main() {
@@ -91,5 +127,8 @@ int main() {
   testRequestDefaultAdvancedMode();
   testRequestAdvancedMode();
   testRequestRejectsInvalidAdvancedMode();
+  testCompressionPrompt();
+  testCompressedContext();
+  testCompressionFallback();
   return 0;
 }

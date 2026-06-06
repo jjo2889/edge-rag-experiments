@@ -119,6 +119,7 @@ if(BUILD_RAG_TESTS)
   add_executable(rag_contract_tests
     tests/advanced_contract_test.cpp
     src/advanced_mode.cpp
+    src/contextual_compressor.cpp
     src/query_request_io.cpp)
   target_include_directories(rag_contract_tests PRIVATE
     "${CMAKE_SOURCE_DIR}/include"
