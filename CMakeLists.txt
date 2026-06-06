@@ -109,3 +109,19 @@ if(BUILD_RAG_HTTP_SERVER)
     "${LLAMA_CPP_ROOT}/vendor")
   set_target_properties(rag_http_server PROPERTIES BUILD_RPATH "${RAG_LOCAL_RPATH}")
 endif()
+
+option(BUILD_RAG_TESTS "Build RAG test executables" OFF)
+
+if(BUILD_RAG_TESTS)
+  enable_testing()
+
+  add_executable(rag_contract_tests
+    tests/advanced_contract_test.cpp
+    src/advanced_mode.cpp
+    src/query_request_io.cpp)
+  target_include_directories(rag_contract_tests PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${LLAMA_CPP_ROOT}/vendor")
+  target_compile_options(rag_contract_tests PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME rag_contract_tests COMMAND rag_contract_tests)
+endif()
