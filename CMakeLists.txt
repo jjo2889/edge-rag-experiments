@@ -55,6 +55,7 @@ find_library(LLAMA_LIBRARY
 
 set(RAG_CORE_SOURCES
   src/advanced_mode.cpp
+  src/advanced_query_transformer.cpp
   src/config.cpp
   src/document_loader.cpp
   src/text_chunker.cpp
