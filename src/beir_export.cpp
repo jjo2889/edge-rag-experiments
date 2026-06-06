@@ -245,6 +245,7 @@ nlohmann::json buildPredictionRow(const std::string& sample_id,
   row["sample_id"] = sample_id;
   row["dataset"] = dataset;
   row["split"] = split;
+  row["advanced"] = advancedModeToString(result.advanced_mode);
   row["user_input"] = user_input;
   row["response"] = result.answer;
   row["retrieved_contexts"] = retrieved_contexts;
@@ -275,6 +276,7 @@ void writeManifestJson(const BeirExportOptions& options,
   manifest["status"] = "ok";
   manifest["dataset"] = options.dataset;
   manifest["split"] = options.split;
+  manifest["advanced"] = advancedModeToString(options.advanced);
   manifest["output_jsonl"] = options.output_jsonl_path;
   manifest["rows_written"] = rows_written;
   manifest["inputs"] =
@@ -283,7 +285,7 @@ void writeManifestJson(const BeirExportOptions& options,
                      {"corpus", options.corpus_path}};
   manifest["reference_policy"] = "qrels_positive_docs_title_plus_text_concat";
   manifest["run_config"] =
-      query::buildRunConfigJson(model_cfg, retrieval_cfg, model_config_path, retrieval_config_path);
+      query::buildRunConfigJson(model_cfg, retrieval_cfg, model_config_path, retrieval_config_path, options.advanced);
 
   std::ofstream out(manifest_path);
   if (!out) {
@@ -346,7 +348,7 @@ size_t exportBeirPredictionsJsonl(const RagPipeline& pipeline,
         (qrel_it == qrels.end()) ? std::vector<std::string>() : qrel_it->second;
     const std::string reference = buildReferenceFromQrels(qrel_doc_ids, corpus_by_id);
 
-    const RagResult result = pipeline.run(query_it->second);
+    const RagResult result = pipeline.run(query_it->second, options.advanced);
     const double memory_mb = query::getResidentMemoryMb();
     if (isBlank(result.answer)) {
       throw std::runtime_error("Empty response generated for sample_id=" + sample_id);

@@ -138,10 +138,12 @@ nlohmann::json buildTraceJson(const RagResult& result, const double memory_mb) {
 nlohmann::json buildRunConfigJson(const ModelConfig& model_cfg,
                                   const RetrievalConfig& retrieval_cfg,
                                   const std::string& model_config_path,
-                                  const std::string& retrieval_config_path) {
+                                  const std::string& retrieval_config_path,
+                                  const AdvancedMode advanced) {
   nlohmann::json run_config;
   run_config["model_config_path"] = nullableString(model_config_path);
   run_config["retrieval_config_path"] = nullableString(retrieval_config_path);
+  run_config["advanced"] = advancedModeToString(advanced);
   run_config["generation"] = buildGenerationConfigJson(model_cfg);
   run_config["retrieval"] = buildRetrievalConfigJson(retrieval_cfg);
   run_config["prompt"] = buildPromptConfigJson(model_cfg, retrieval_cfg);
@@ -159,14 +161,17 @@ nlohmann::json buildSingleRunSuccessJson(const QueryRequest& request,
   output["status"] = "ok";
   output["error"] = nullptr;
   output["mode"] = "naive_rag";
+  output["advanced"] = advancedModeToString(request.advanced);
   output["request"] = nlohmann::json{{"run_id", nullableString(request.run_id)},
                                      {"dataset", nullableString(request.dataset)},
                                      {"split", nullableString(request.split)},
                                      {"sample_id", nullableString(request.sample_id)},
+                                     {"advanced", advancedModeToString(request.advanced)},
                                      {"question", request.question}};
   output["answer"] = result.answer;
   output["retrieved_contexts"] = buildRetrievedContexts(result);
-  output["run_config"] = buildRunConfigJson(model_cfg, retrieval_cfg, model_config_path, retrieval_config_path);
+  output["run_config"] =
+      buildRunConfigJson(model_cfg, retrieval_cfg, model_config_path, retrieval_config_path, request.advanced);
   output["trace"] = buildTraceJson(result, memory_mb);
   return output;
 }
@@ -176,11 +181,13 @@ nlohmann::json buildSingleRunErrorJson(const std::optional<QueryRequest>& reques
   output["status"] = "error";
   output["error"] = nlohmann::json{{"message", message}};
   output["mode"] = "naive_rag";
+  output["advanced"] = request ? advancedModeToString(request->advanced) : "none";
   output["request"] = nlohmann::json{
       {"run_id", request ? nullableString(request->run_id) : nlohmann::json(nullptr)},
       {"dataset", request ? nullableString(request->dataset) : nlohmann::json(nullptr)},
       {"split", request ? nullableString(request->split) : nlohmann::json(nullptr)},
       {"sample_id", request ? nullableString(request->sample_id) : nlohmann::json(nullptr)},
+      {"advanced", request ? nlohmann::json(advancedModeToString(request->advanced)) : nlohmann::json("none")},
       {"question", request ? nlohmann::json(request->question) : nlohmann::json(nullptr)}};
   output["answer"] = "";
   output["retrieved_contexts"] = nlohmann::json::array();

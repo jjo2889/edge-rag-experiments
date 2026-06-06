@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <string>
 
+#include "advanced_mode.hpp"
 #include "config.hpp"
 #include "rag_pipeline.hpp"
 
@@ -15,6 +16,7 @@ struct BeirExportOptions {
   std::string qrels_path;
   std::string corpus_path;
   std::string output_jsonl_path;
+  AdvancedMode advanced = AdvancedMode::None;
   int limit = -1;
 };
 

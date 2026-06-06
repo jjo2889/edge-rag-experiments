@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "advanced_mode.hpp"
+
 namespace rag {
 
 struct Document {
@@ -24,6 +26,7 @@ struct RetrievedChunk {
 };
 
 struct RagResult {
+  AdvancedMode advanced_mode = AdvancedMode::None;
   std::string original_query;
   std::string retrieval_query;
   std::string prompt_body;

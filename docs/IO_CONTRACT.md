@@ -35,6 +35,7 @@
 | `dataset` | string \| null | 실험 데이터셋 이름. 예: `scifact`, `nq` |
 | `split` | string \| null | 데이터셋 분할 이름. 예: `train`, `dev`, `test` |
 | `sample_id` | string \| null | `dataset`/`split` 안에서 샘플을 식별하는 ID |
+| `advanced` | string | Advanced RAG mode. 기본값은 `none` |
 
 `mode` 값:
 
@@ -129,6 +130,7 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
 | `dataset` | string \| null | 데이터셋 이름 |
 | `split` | string \| null | 데이터셋 분할 이름 |
 | `sample_id` | string \| null | 샘플 ID |
+| `advanced` | string | Advanced RAG mode |
 | `question` | string \| null | 질의문 |
 
 `retrieved_contexts[]`:
@@ -147,6 +149,7 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
 |---|---|---|
 | `model_config_path` | string \| null | model config 경로 |
 | `retrieval_config_path` | string \| null | retrieval config 경로 |
+| `advanced` | string | Advanced RAG mode |
 | `generation` | object | 생성 설정 |
 | `retrieval` | object | 검색 설정 |
 | `prompt` | object | 프롬프트 설정 |
@@ -194,6 +197,7 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
     "dataset": "scifact",
     "split": "test",
     "sample_id": "1",
+    "advanced": "none",
     "question": "0-dimensional biomaterials lack inductive properties."
   },
   "answer": "The retrieved evidence does not support the claim.",
@@ -209,6 +213,7 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
   "run_config": {
     "model_config_path": "configs/model.yaml",
     "retrieval_config_path": "configs/retrieval_scifact.yaml",
+    "advanced": "none",
     "generation": {
       "max_new_tokens": 128,
       "temperature": 0.3,
@@ -354,6 +359,7 @@ qrels TSV 컬럼:
 | `sample_id` | string | 데이터셋 내 샘플 ID |
 | `dataset` | string | 데이터셋 이름 |
 | `split` | string | 데이터셋 분할 이름 |
+| `advanced` | string | Advanced RAG mode |
 | `user_input` | string | RAGAS `user_input` |
 | `response` | string | RAGAS `response` |
 | `retrieved_contexts` | array[string] | RAGAS `retrieved_contexts` |
@@ -375,6 +381,7 @@ prediction JSONL row 예시:
   "sample_id": "1",
   "dataset": "scifact",
   "split": "test",
+  "advanced": "none",
   "user_input": "0-dimensional biomaterials lack inductive properties.",
   "response": "The retrieved evidence does not support the claim.",
   "retrieved_contexts": [

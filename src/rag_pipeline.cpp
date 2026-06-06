@@ -11,7 +11,7 @@ RagPipeline::RagPipeline(const Retriever& retriever,
                          const int top_k)
     : retriever_(&retriever), prompt_builder_(&prompt_builder), generator_(&generator), top_k_(std::max(1, top_k)) {}
 
-RagResult RagPipeline::run(const std::string& query) const {
+RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced) const {
   const auto total_start = std::chrono::steady_clock::now();
 
   const auto retrieve_start = std::chrono::steady_clock::now();
@@ -27,6 +27,7 @@ RagResult RagPipeline::run(const std::string& query) const {
   const auto generate_end = std::chrono::steady_clock::now();
 
   RagResult result;
+  result.advanced_mode = advanced;
   result.original_query = query;
   result.retrieval_query = query;
   result.prompt_body = generation_trace.prompt_body;

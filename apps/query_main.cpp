@@ -9,6 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "advanced_mode.hpp"
 #include "app_cli.hpp"
 #include "beir_export.hpp"
 #include "config.hpp"
@@ -29,15 +30,17 @@ struct QueryCliOptions {
   std::string question;
   std::string request_json_path;
   rag::BeirExportOptions beir_export;
+  rag::AdvancedMode advanced = rag::AdvancedMode::None;
   bool question_provided = false;
+  bool advanced_provided = false;
   bool show_help = false;
 };
 
 void printUsage() {
   std::cout << "Usage: rag_query [--model_config path] [--retrieval_config path] --request_json path\n";
-  std::cout << "       rag_query [--model_config path] [--retrieval_config path] --question \"...\"\n";
+  std::cout << "       rag_query [--model_config path] [--retrieval_config path] [--advanced mode] --question \"...\"\n";
   std::cout << "       rag_query --dataset name --split name --questions path --qrels path --corpus path "
-               "--output_jsonl path [--limit N]\n";
+               "--output_jsonl path [--advanced mode] [--limit N]\n";
 }
 
 std::vector<rag::Chunk> loadChunkStore(const std::string& path) {
@@ -77,6 +80,13 @@ QueryCliOptions parseQueryCliOptions(int argc, char** argv) {
       }
       options.question = argv[++i];
       options.question_provided = true;
+    } else if (arg == "--advanced") {
+      if (i + 1 >= argc) {
+        throw std::runtime_error("Missing value for --advanced");
+      }
+      options.advanced = rag::advancedModeFromString(argv[++i]);
+      options.advanced_provided = true;
+      options.beir_export.advanced = options.advanced;
     } else if (arg == "--request_json") {
       if (i + 1 >= argc) {
         throw std::runtime_error("Missing value for --request_json");
@@ -158,6 +168,9 @@ void validateQueryCliOptions(const QueryCliOptions& options) {
   if (options.question_provided && !options.request_json_path.empty()) {
     throw std::runtime_error("Use either --question or --request_json, not both.");
   }
+  if (options.advanced_provided && !options.request_json_path.empty()) {
+    throw std::runtime_error("Use advanced in request JSON when using --request_json.");
+  }
   if (!options.question_provided && options.request_json_path.empty()) {
     throw std::runtime_error("Single query mode requires --request_json or --question.");
   }
@@ -213,6 +226,9 @@ int main(int argc, char** argv) {
       rag::query::QueryRequest request =
           cli.request_json_path.empty() ? rag::query::buildQuestionRequest(cli.question)
                                         : rag::query::loadRequestFromJson(cli.request_json_path);
+      if (cli.request_json_path.empty()) {
+        request.advanced = cli.advanced;
+      }
       request_for_error = request;
       rag::query::validateRequest(*request_for_error);
     }
@@ -247,7 +263,7 @@ int main(int argc, char** argv) {
       return 0;
     }
 
-    const rag::RagResult result = pipeline.run(request_for_error->question);
+    const rag::RagResult result = pipeline.run(request_for_error->question, request_for_error->advanced);
     const double memory_mb = rag::query::getResidentMemoryMb();
 
     const nlohmann::json output = rag::query::buildSingleRunSuccessJson(*request_for_error,
