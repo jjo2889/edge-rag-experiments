@@ -534,7 +534,7 @@ ctest --test-dir build --output-on-failure
 브랜치:
 
 ```text
-feature/advanced-sentence-window
+feature/advanced-sentence-window-v2
 ```
 
 작동 레이어:
@@ -543,52 +543,144 @@ feature/advanced-sentence-window
 ingest metadata + retrieval 후 post_retrieval
 ```
 
-주의:
+핵심 가정:
 
-현재 chunk store row는 다음 필드만 가진다.
+```text
+1. retrieval unit은 기존 chunk embedding을 유지한다.
+2. sentence_window는 retrieval 결과의 context text만 문장 window로 교체한다.
+3. top_k, chunk_size, chunk_overlap 조건은 Naive RAG와 동일하게 유지한다.
+4. sentence_window 단계에서는 LLM을 호출하지 않는다.
+```
+
+위 가정을 두는 이유는 실험 통제를 위해서다. sentence 단위로 embedding/index를 새로 만들면 `top_k=3`, `chunk_size=256`, `overlap=32` 조건이 Naive RAG와 달라진다. 이 경우 실험 결과가 Sentence Window 효과인지, retrieval granularity 변경 효과인지 분리하기 어렵다.
+
+현재 상태와 확장 기준:
+
+```text
+현재 feature/advanced-sentence-window 브랜치는 doc_chunk_index ± N 기반이다.
+이는 엄밀히는 Sentence Window Retrieval이 아니라 Neighbor Chunk Window MVP에 가깝다.
+논문용 sentence_window 구현은 sentence metadata 기반 v2 브랜치에서 별도로 진행한다.
+```
+
+현재 chunk store row는 대략 다음 필드를 가진다.
 
 ```json
 {"chunk_id": 0, "doc_id": "...", "text": "..."}
 ```
 
-따라서 정확한 Sentence Window Retrieval을 구현하려면 ingest 시점에 문장 또는 위치 metadata를 저장해야 한다. 단순히 같은 문서의 인접 chunk를 붙이는 방식은 `Neighbor Chunk Window`에 가깝다. 본 연구에서 `Sentence Window Retrieval`이라고 부르려면 sentence-level metadata 확장이 필요하다.
+정확한 Sentence Window Retrieval을 구현하려면 query 시점에 다음 정보가 필요하다.
+
+```text
+chunk -> 문서 내 sentence range
+doc_id + sentence_index -> sentence text
+retrieved chunk 내부에서 query와 가장 가까운 대표 sentence
+대표 sentence 기준 ±window_size sentence text
+```
+
+권장 저장 방식:
+
+```text
+chunk_store JSONL
+  chunk_id
+  doc_id
+  doc_chunk_index
+  sentence_begin
+  sentence_end
+  text
+
+sentence_store JSONL
+  doc_id
+  sentence_index
+  text
+```
+
+`sentence_store`는 `chunk_store_path + ".sentences.jsonl"` 위치에 저장하는 것을 기본값으로 둔다. 별도 config key를 추가할 수 있지만, 첫 구현에서는 설정 표면을 늘리지 않는 쪽을 우선한다. 기존 chunk store에는 `sentence_begin`, `sentence_end`가 없을 수 있으므로 loader는 optional field로 읽고, sentence metadata가 없으면 원 context를 그대로 반환한다.
+
+대안과 배제:
+
+```text
+대안 1: sentence 단위 embedding/index 생성
+  장점: LlamaIndex식 Sentence Window와 가장 유사하다.
+  단점: 본 실험의 chunk_size/top_k 통제 조건을 깨뜨린다.
+  판단: 별도 실험 축으로는 가능하지만, 현재 ablation에서는 제외한다.
+
+대안 2: retrieved chunk 주변 chunk를 붙이기
+  장점: 구현이 쉽고 기존 chunk store만으로 가능하다.
+  단점: sentence_window가 아니라 neighbor_chunk_window에 가깝다.
+  판단: MVP로는 가능하지만 논문용 구현명으로는 부적절하다.
+
+대안 3: query 시점에 원문 파일을 다시 로드해 문장 window 생성
+  장점: sentence_store가 필요 없다.
+  단점: query 실행이 ingest 당시 corpus 경로와 강하게 결합된다.
+  판단: edge 배포와 재현성 면에서 sentence_store 저장이 낫다.
+```
+
+정식 동작 흐름:
+
+```text
+original_query
+  -> dense retrieve top_k chunk
+  -> 각 hit chunk의 sentence range 조회
+  -> hit chunk 내부 sentence 중 lexical overlap이 가장 높은 대표 sentence 선택
+  -> 대표 sentence 기준 [selected - N, selected + N] sentence 조회
+  -> RetrievedChunk의 score/rank/doc_id는 유지하고 context text만 window text로 교체
+  -> original_query로 final prompt 생성
+```
+
+초기 selector는 deterministic lexical overlap으로 둔다. sentence embedding selector를 추가하면 비용과 의존성이 늘어나므로, 1차 PR에서는 제외한다.
 
 구현 계획:
 
-### Commit 1: Extend chunk metadata schema
+### Commit 1: Add sentence metadata schema
 
 포함 변경:
 
 ```text
-Chunk에 doc_chunk_index, start_word, end_word 또는 sentence_start, sentence_end 추가
-TextChunker가 문서 내 위치를 기록
-chunk store JSONL에 새 필드 저장
-loadChunkStore는 기존 JSONL도 읽을 수 있게 optional fallback
+include/types.hpp
+  Chunk에 sentence_begin, sentence_end optional range 추가
+  Sentence 또는 DocumentSentence 구조체 추가 검토
+
+src/text_chunker.cpp
+  기존 chunking은 유지
+  문서별 sentence split 결과와 chunk sentence range를 계산
+
+apps/ingest_main.cpp
+  chunk_store JSONL에 sentence_begin/sentence_end 저장
+  chunk_store_path + ".sentences.jsonl"에 sentence_store 저장
+
+apps/query_main.cpp
+  기존 chunk store optional field 로드
+  sentence_store가 없으면 empty store로 fallback
 ```
 
 검증:
 
 ```text
 기존 chunk store도 계속 로드된다.
-새 ingest 결과에는 위치 metadata가 들어간다.
+새 ingest 결과에는 sentence_begin/sentence_end가 들어간다.
+sentence_store JSONL이 생성된다.
+chunk_size/chunk_overlap 결과 chunk 개수는 기존과 동일하다.
 ```
 
-### Commit 2: Add sentence/window expander
+### Commit 2: Add sentence selector and window expander
 
 포함 변경:
 
 ```text
 include/sentence_window.hpp
 src/sentence_window.cpp
-  expand(contexts, all_chunks, window_size)
+  selectRepresentativeSentence(query, hit_chunk, sentence_store)
+  expandSentenceWindow(query, contexts, sentence_store, window_size)
 ```
 
 검증:
 
 ```text
-같은 doc_id 안에서 hit 주변 window만 붙인다.
-다른 문서 chunk는 섞지 않는다.
-중복 window는 제거한다.
+대표 sentence는 hit chunk의 sentence_begin/sentence_end 범위 안에서만 선택된다.
+window는 같은 doc_id 안에서만 만들어진다.
+문서 시작/끝 boundary에서 음수 index나 범위 초과가 발생하지 않는다.
+window 내부 중복 sentence는 제거된다.
+metadata가 없으면 원 context를 그대로 반환한다.
 ```
 
 ### Commit 3: Apply sentence_window mode in pipeline
@@ -597,7 +689,8 @@ src/sentence_window.cpp
 
 ```text
 RagPipeline mode=sentence_window 분기
-retrieved hit는 유지하되 prompt context text만 window 확장
+retrieved hit의 dense score/rank/doc_id는 유지
+prompt context text만 sentence window text로 교체
 context_transform_ms 기록
 ```
 
@@ -605,11 +698,24 @@ context_transform_ms 기록
 
 ```text
 top_k는 유지된다.
-각 context text 길이는 확장될 수 있다.
+각 context text는 대표 sentence ±window_size 문장으로 바뀐다.
 retrieved_doc_ids/ranks는 원 hit 기준으로 유지된다.
+advanced=none은 sentence_store 유무와 무관하게 기존 흐름을 탄다.
 ```
 
 ### Commit 4: Add tests and ingest compatibility smoke
+
+포함 변경:
+
+```text
+tests/advanced_contract_test.cpp 또는 tests/sentence_window_test.cpp
+  sentence metadata 없는 legacy fallback
+  sentence range mapping
+  representative sentence selection
+  window boundary handling
+  cross-doc isolation
+  window_size=0 동작
+```
 
 검증:
 
@@ -625,6 +731,28 @@ ctest --test-dir build --output-on-failure
 ./build/rag_ingest \
   --model_config configs/model.yaml \
   --retrieval_config configs/retrieval_scifact.yaml
+```
+
+query smoke:
+
+```bash
+./build/rag_query \
+  --model_config configs/model.yaml \
+  --retrieval_config configs/retrieval_scifact.yaml \
+  --advanced sentence_window \
+  --question "0-dimensional biomaterials show inductive properties."
+```
+
+성공 기준:
+
+```text
+1. status=ok
+2. advanced=sentence_window가 output에 기록된다.
+3. retrieval_query는 original_query와 같다.
+4. retrieved context 수는 top_k를 넘지 않는다.
+5. context_transform_ms가 기록된다.
+6. sentence metadata가 있는 경우 prompt context가 sentence window text로 교체된다.
+7. sentence metadata가 없는 legacy chunk store에서는 원 context fallback으로 동작한다.
 ```
 
 ## 5. Contextual Compression
