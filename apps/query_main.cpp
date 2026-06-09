@@ -58,6 +58,15 @@ std::vector<rag::Chunk> loadChunkStore(const std::string& path) {
     auto j = nlohmann::json::parse(line);
     rag::Chunk chunk;
     chunk.chunk_id = j.at("chunk_id").get<int64_t>();
+    if (j.contains("doc_chunk_index") && j.at("doc_chunk_index").is_number_integer()) {
+      chunk.doc_chunk_index = j.at("doc_chunk_index").get<int>();
+    }
+    if (j.contains("sentence_begin") && j.at("sentence_begin").is_number_integer()) {
+      chunk.sentence_begin = j.at("sentence_begin").get<int>();
+    }
+    if (j.contains("sentence_end") && j.at("sentence_end").is_number_integer()) {
+      chunk.sentence_end = j.at("sentence_end").get<int>();
+    }
     chunk.doc_id = j.at("doc_id").get<std::string>();
     chunk.text = j.at("text").get<std::string>();
     chunks.push_back(std::move(chunk));

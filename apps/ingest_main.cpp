@@ -24,6 +24,10 @@ void printUsage() {
   std::cout << "Usage: rag_ingest [--model_config path] [--retrieval_config path]\n";
 }
 
+std::string buildSentenceStorePath(const std::string& chunk_store_path) {
+  return chunk_store_path + ".sentences.jsonl";
+}
+
 std::vector<rag::Chunk> saveChunkStore(const std::vector<rag::Chunk>& chunks, const std::string& path) {
   const fs::path out_path(path);
   if (out_path.has_parent_path()) {
@@ -38,11 +42,34 @@ std::vector<rag::Chunk> saveChunkStore(const std::vector<rag::Chunk>& chunks, co
   for (const auto& chunk : chunks) {
     nlohmann::json j;
     j["chunk_id"] = chunk.chunk_id;
+    j["doc_chunk_index"] = chunk.doc_chunk_index;
+    j["sentence_begin"] = chunk.sentence_begin;
+    j["sentence_end"] = chunk.sentence_end;
     j["doc_id"] = chunk.doc_id;
     j["text"] = chunk.text;
     out << j.dump() << '\n';
   }
   return chunks;
+}
+
+void saveSentenceStore(const std::vector<rag::DocumentSentence>& sentences, const std::string& path) {
+  const fs::path out_path(path);
+  if (out_path.has_parent_path()) {
+    fs::create_directories(out_path.parent_path());
+  }
+
+  std::ofstream out(path);
+  if (!out) {
+    throw std::runtime_error("Failed to open sentence store path for write: " + path);
+  }
+
+  for (const auto& sentence : sentences) {
+    nlohmann::json j;
+    j["doc_id"] = sentence.doc_id;
+    j["sentence_index"] = sentence.sentence_index;
+    j["text"] = sentence.text;
+    out << j.dump() << '\n';
+  }
 }
 
 }  // namespace
@@ -76,7 +103,8 @@ int main(int argc, char** argv) {
     std::cout << "[ingest] documents: " << docs.size() << '\n';
 
     rag::TextChunker chunker(retrieval_cfg.chunk_size, retrieval_cfg.chunk_overlap);
-    const std::vector<rag::Chunk> chunks = chunker.chunkDocuments(docs);
+    const rag::ChunkingResult chunking = chunker.chunkDocumentsWithSentences(docs);
+    const std::vector<rag::Chunk>& chunks = chunking.chunks;
     if (chunks.empty()) {
       throw std::runtime_error("No chunks produced.");
     }
@@ -104,6 +132,9 @@ int main(int argc, char** argv) {
 
     saveChunkStore(chunks, retrieval_cfg.chunk_store_path);
     std::cout << "[ingest] chunk store saved: " << retrieval_cfg.chunk_store_path << '\n';
+    const std::string sentence_store_path = buildSentenceStorePath(retrieval_cfg.chunk_store_path);
+    saveSentenceStore(chunking.sentences, sentence_store_path);
+    std::cout << "[ingest] sentence store saved: " << sentence_store_path << '\n';
     std::cout << "[ingest] done.\n";
 
     const auto ingest_end = std::chrono::steady_clock::now();
