@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "advanced_mode.hpp"
+#include "advanced_query_transformer.hpp"
 #include "query_request_io.hpp"
 #include "reranker.hpp"
 
@@ -86,6 +87,26 @@ void testRequestRejectsInvalidAdvancedMode() {
   require(threw, "invalid advanced request field must throw");
 }
 
+void testQueryRewritePrompt() {
+  const std::string query = "0-dimensional biomaterials show inductive properties.";
+  const std::string prompt = rag::buildQueryRewritePrompt(query);
+  require(prompt.find(query) != std::string::npos, "rewrite prompt must include query");
+  require(prompt.find("[Rewritten Query]") != std::string::npos, "rewrite prompt must request rewritten query");
+}
+
+void testQueryRewriteSanitizer() {
+  const rag::QueryTransformResult rewritten =
+      rag::sanitizeQueryRewrite("\n  \"biomaterials inductive properties\"  \nextra line", "fallback query");
+  require(!rewritten.used_fallback, "valid rewrite must not fallback");
+  require(rewritten.text == "biomaterials inductive properties", "rewrite sanitizer should keep first clean line");
+}
+
+void testQueryRewriteFallback() {
+  const rag::QueryTransformResult rewritten = rag::sanitizeQueryRewrite(" \n\t\n", "fallback query");
+  require(rewritten.used_fallback, "blank rewrite must fallback");
+  require(rewritten.text == "fallback query", "blank rewrite fallback text mismatch");
+}
+
 rag::RetrievedChunk makeCandidate(int64_t chunk_id, const std::string& text, float dense_score) {
   rag::RetrievedChunk candidate;
   candidate.chunk.chunk_id = chunk_id;
@@ -123,6 +144,9 @@ int main() {
   testRequestDefaultAdvancedMode();
   testRequestAdvancedMode();
   testRequestRejectsInvalidAdvancedMode();
+  testQueryRewritePrompt();
+  testQueryRewriteSanitizer();
+  testQueryRewriteFallback();
   testRerankByLexicalOverlap();
   testRerankZeroTopK();
   return 0;

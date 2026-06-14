@@ -74,6 +74,7 @@ find_library(LLAMA_LIBRARY
 
 set(RAG_CORE_SOURCES
   src/advanced_mode.cpp
+  src/advanced_query_transformer.cpp
   src/config.cpp
   src/document_loader.cpp
   src/text_chunker.cpp
@@ -149,6 +150,7 @@ if(BUILD_RAG_TESTS)
   add_executable(rag_contract_tests
     tests/advanced_contract_test.cpp
     src/advanced_mode.cpp
+    src/advanced_query_transformer.cpp
     src/query_request_io.cpp
     src/reranker.cpp)
   target_include_directories(rag_contract_tests PRIVATE
