@@ -457,6 +457,18 @@ bge-reranker 계열 tokenizer가 현재 WordPiece tokenizer와 다를 수 있다
 SentencePiece/XLM-R 기반이면 별도 tokenizer 구현 또는 ONNX 모델 선택 재검토가 필요하다.
 ```
 
+정식 BGE 구현 기준:
+
+```text
+feature/advanced-rerank-bge
+  기존 lexical reranker MVP 위에 BGE ONNX backend를 추가한다.
+  BGE backend는 onnx-community/bge-reranker-base-ONNX + BAAI/bge-reranker-base sentencepiece model을 기준으로 한다.
+  bge-reranker-base는 XLM-RoBERTa 계열이므로 기존 all-MiniLM WordPiece tokenizer를 재사용하지 않는다.
+  query/context pair는 <s> query </s></s> context </s> 형식으로 tokenize한다.
+  sentencepiece C++ library가 없으면 backend=bge 실행 시 명시적으로 실패한다.
+  backend=lexical은 deterministic fallback 및 테스트용으로 유지한다.
+```
+
 구현 계획:
 
 ### Commit 1: Add rerank config and candidate retrieval flow
@@ -498,10 +510,13 @@ src/reranker.cpp
 포함 변경:
 
 ```text
-reranker_model_path
-reranker_tokenizer_json_path
+BGE reranker config
+  reranker.backend
+  reranker.model_path
+  reranker.sentencepiece_model_path
+  reranker.max_length
 ONNX Runtime session
-pair input tokenization
+XLM-R/SentencePiece pair input tokenization
 ```
 
 검증:

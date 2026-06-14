@@ -179,6 +179,10 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
 - `data_dir`
 - `index_path`
 - `chunk_store_path`
+- `reranker.backend`
+- `reranker.model_path`
+- `reranker.sentencepiece_model_path`
+- `reranker.max_length`
 
 `prompt`:
 - `system_prompt_path`
@@ -241,7 +245,13 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
       "chunk_overlap": 32,
       "data_dir": "data/beir/scifact_corpus",
       "index_path": "data/indexes/scifact/faiss.index",
-      "chunk_store_path": "data/indexes/scifact/chunks.jsonl"
+      "chunk_store_path": "data/indexes/scifact/chunks.jsonl",
+      "reranker": {
+        "backend": "lexical",
+        "model_path": null,
+        "sentencepiece_model_path": null,
+        "max_length": 512
+      }
     },
     "prompt": {
       "system_prompt_path": "configs/prompt_system_scifact.txt",
