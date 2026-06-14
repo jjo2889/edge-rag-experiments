@@ -243,7 +243,10 @@ int main(int argc, char** argv) {
     rag::PromptBuilder prompt_builder(retrieval_cfg.prompt);
     rag::Generator generator(model_cfg);
     std::unique_ptr<rag::BgeReranker> bge_reranker;
-    if (retrieval_cfg.reranker.backend == "bge") {
+    const bool run_uses_rerank =
+        batch_mode ? cli.beir_export.advanced == rag::AdvancedMode::Rerank
+                   : request_for_error && request_for_error->advanced == rag::AdvancedMode::Rerank;
+    if (run_uses_rerank && retrieval_cfg.reranker.backend == "bge") {
       bge_reranker = std::make_unique<rag::BgeReranker>(retrieval_cfg.reranker);
     }
     rag::RagPipeline pipeline(
