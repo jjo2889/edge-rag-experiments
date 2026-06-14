@@ -10,13 +10,16 @@
 
 namespace rag {
 
+class BgeReranker;
+
 class RagPipeline {
  public:
   RagPipeline(const Retriever& retriever,
               const PromptBuilder& prompt_builder,
               const Generator& generator,
               int top_k,
-              int rerank_candidate_k);
+              int rerank_candidate_k,
+              const BgeReranker* bge_reranker = nullptr);
 
   RagResult run(const std::string& query, AdvancedMode advanced = AdvancedMode::None) const;
 
@@ -24,6 +27,7 @@ class RagPipeline {
   const Retriever* retriever_;
   const PromptBuilder* prompt_builder_;
   const Generator* generator_;
+  const BgeReranker* bge_reranker_;
   int top_k_;
   int rerank_candidate_k_;
 };

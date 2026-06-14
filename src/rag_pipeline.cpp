@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 
+#include "bge_reranker.hpp"
 #include "reranker.hpp"
 
 namespace rag {
@@ -11,10 +12,12 @@ RagPipeline::RagPipeline(const Retriever& retriever,
                          const PromptBuilder& prompt_builder,
                          const Generator& generator,
                          const int top_k,
-                         const int rerank_candidate_k)
+                         const int rerank_candidate_k,
+                         const BgeReranker* bge_reranker)
     : retriever_(&retriever),
       prompt_builder_(&prompt_builder),
       generator_(&generator),
+      bge_reranker_(bge_reranker),
       top_k_(std::max(1, top_k)),
       rerank_candidate_k_(std::max(std::max(1, top_k), rerank_candidate_k)) {}
 
@@ -28,7 +31,11 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
 
   const auto rerank_start = std::chrono::steady_clock::now();
   if (advanced == AdvancedMode::Rerank) {
-    contexts = rerankByLexicalOverlap(query, contexts, top_k_);
+    if (bge_reranker_) {
+      contexts = bge_reranker_->rerank(query, contexts, top_k_);
+    } else {
+      contexts = rerankByLexicalOverlap(query, contexts, top_k_);
+    }
   }
   const auto rerank_end = std::chrono::steady_clock::now();
 
