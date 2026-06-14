@@ -146,6 +146,9 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
 | `rank` | integer | 1부터 시작하는 검색 순위 |
 | `doc_id` | string | 원문 문서 ID |
 | `chunk_id` | integer | chunk store 내 chunk ID |
+| `doc_chunk_index` | integer | 문서 내부 chunk 순서. legacy chunk store에서는 생략될 수 있음 |
+| `sentence_begin` | integer | context text가 대응하는 문서 내 시작 sentence index. legacy chunk store에서는 생략될 수 있음 |
+| `sentence_end` | integer | context text가 대응하는 문서 내 exclusive end sentence index. legacy chunk store에서는 생략될 수 있음 |
 | `score` | number | retriever 원점수. 검색 순서는 `rank`를 기준으로 해석한다. |
 | `rerank_score` | number | rerank 적용 시 reranker 점수 |
 | `text` | string | context text |
@@ -402,12 +405,15 @@ qrels TSV 컬럼:
 | `retrieved_doc_ids` | array[string] | 검색된 문서 ID |
 | `retrieved_scores` | array[number] | retriever 원점수 |
 | `retrieved_rerank_scores` | array[number \| null] | rerank 적용 시 reranker 점수. 미적용 시 `null` |
+| `retrieved_sentence_begins` | array[integer] | 각 context의 문서 내 시작 sentence index. metadata가 없으면 `-1` |
+| `retrieved_sentence_ends` | array[integer] | 각 context의 문서 내 exclusive end sentence index. metadata가 없으면 `-1` |
 | `trace` | object | 샘플별 실행 trace |
 
 RAGAS 입력으로 직접 쓰는 필드는 `user_input`, `response`, `retrieved_contexts`, `reference`이다.
 배치 row의 `retrieved_contexts`는 RAGAS 입력 형식에 맞춘 string 배열이다. 검색 metadata는 `retrieved_ranks`, `retrieved_doc_ids`, `retrieved_scores`, `trace`에 분리해 기록한다.
 `retrieved_contexts`, `retrieved_ranks`, `retrieved_doc_ids`, `retrieved_scores`는 같은 길이의 배열이며, 같은 index가 같은 검색 결과를 의미한다.
 `retrieved_rerank_scores`도 같은 길이이며, rerank 미적용 row에서는 각 값이 `null`이다.
+`retrieved_sentence_begins`와 `retrieved_sentence_ends`도 같은 길이이며, sentence metadata가 없는 legacy row에서는 `-1`이다.
 
 prediction JSONL row 예시:
 
@@ -438,6 +444,12 @@ prediction JSONL row 예시:
   ],
   "retrieved_rerank_scores": [
     null
+  ],
+  "retrieved_sentence_begins": [
+    0
+  ],
+  "retrieved_sentence_ends": [
+    2
   ],
   "trace": {
     "latency_ms": {
