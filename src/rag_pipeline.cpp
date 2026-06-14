@@ -5,6 +5,7 @@
 
 #include "advanced_query_transformer.hpp"
 #include "bge_reranker.hpp"
+#include "hyde_transformer.hpp"
 #include "reranker.hpp"
 
 namespace rag {
@@ -30,6 +31,9 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
   if (advanced == AdvancedMode::QueryRewrite) {
     const GenerationTrace rewrite_trace = generator_->generateWithTrace(buildQueryRewritePrompt(query));
     retrieval_query = sanitizeQueryRewrite(rewrite_trace.output_text, query).text;
+  } else if (advanced == AdvancedMode::Hyde) {
+    const GenerationTrace hyde_trace = generator_->generateWithTrace(buildHydePrompt(query));
+    retrieval_query = sanitizeHydeDocument(hyde_trace.output_text, query).document;
   }
   const auto query_transform_end = std::chrono::steady_clock::now();
 

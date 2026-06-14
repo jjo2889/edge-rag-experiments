@@ -7,6 +7,7 @@
 
 #include "advanced_mode.hpp"
 #include "advanced_query_transformer.hpp"
+#include "hyde_transformer.hpp"
 #include "query_request_io.hpp"
 #include "reranker.hpp"
 
@@ -107,6 +108,25 @@ void testQueryRewriteFallback() {
   require(rewritten.text == "fallback query", "blank rewrite fallback text mismatch");
 }
 
+void testHydePrompt() {
+  const std::string query = "Who invented the frisbee?";
+  const std::string prompt = rag::buildHydePrompt(query);
+  require(prompt.find(query) != std::string::npos, "HyDE prompt must include query");
+  require(prompt.find("[Hypothetical Document]") != std::string::npos, "HyDE prompt must request document");
+}
+
+void testHydeSanitizer() {
+  const rag::HydeTransformResult result = rag::sanitizeHydeDocument("  A short retrieval document.\n", "fallback");
+  require(!result.used_fallback, "valid HyDE document must not fallback");
+  require(result.document == "A short retrieval document.", "HyDE sanitizer trim failed");
+}
+
+void testHydeFallback() {
+  const rag::HydeTransformResult result = rag::sanitizeHydeDocument("\n \t", "fallback query");
+  require(result.used_fallback, "blank HyDE document must fallback");
+  require(result.document == "fallback query", "HyDE fallback text mismatch");
+}
+
 rag::RetrievedChunk makeCandidate(int64_t chunk_id, const std::string& text, float dense_score) {
   rag::RetrievedChunk candidate;
   candidate.chunk.chunk_id = chunk_id;
@@ -147,6 +167,9 @@ int main() {
   testQueryRewritePrompt();
   testQueryRewriteSanitizer();
   testQueryRewriteFallback();
+  testHydePrompt();
+  testHydeSanitizer();
+  testHydeFallback();
   testRerankByLexicalOverlap();
   testRerankZeroTopK();
   return 0;
