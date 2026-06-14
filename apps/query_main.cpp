@@ -45,6 +45,10 @@ void printUsage() {
                "--output_jsonl path [--advanced mode] [--limit N]\n";
 }
 
+std::string buildSentenceStorePath(const std::string& chunk_store_path) {
+  return chunk_store_path + ".sentences.jsonl";
+}
+
 std::vector<rag::Chunk> loadChunkStore(const std::string& path) {
   std::ifstream in(path);
   if (!in) {
@@ -60,11 +64,42 @@ std::vector<rag::Chunk> loadChunkStore(const std::string& path) {
     auto j = nlohmann::json::parse(line);
     rag::Chunk chunk;
     chunk.chunk_id = j.at("chunk_id").get<int64_t>();
+    if (j.contains("doc_chunk_index") && j.at("doc_chunk_index").is_number_integer()) {
+      chunk.doc_chunk_index = j.at("doc_chunk_index").get<int>();
+    }
+    if (j.contains("sentence_begin") && j.at("sentence_begin").is_number_integer()) {
+      chunk.sentence_begin = j.at("sentence_begin").get<int>();
+    }
+    if (j.contains("sentence_end") && j.at("sentence_end").is_number_integer()) {
+      chunk.sentence_end = j.at("sentence_end").get<int>();
+    }
     chunk.doc_id = j.at("doc_id").get<std::string>();
     chunk.text = j.at("text").get<std::string>();
     chunks.push_back(std::move(chunk));
   }
   return chunks;
+}
+
+std::vector<rag::DocumentSentence> loadSentenceStoreIfExists(const std::string& path) {
+  std::ifstream in(path);
+  if (!in) {
+    return {};
+  }
+
+  std::vector<rag::DocumentSentence> sentences;
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty()) {
+      continue;
+    }
+    auto j = nlohmann::json::parse(line);
+    rag::DocumentSentence sentence;
+    sentence.doc_id = j.at("doc_id").get<std::string>();
+    sentence.sentence_index = j.at("sentence_index").get<int>();
+    sentence.text = j.at("text").get<std::string>();
+    sentences.push_back(std::move(sentence));
+  }
+  return sentences;
 }
 
 QueryCliOptions parseQueryCliOptions(int argc, char** argv) {
@@ -236,6 +271,8 @@ int main(int argc, char** argv) {
     }
 
     std::vector<rag::Chunk> chunks = loadChunkStore(retrieval_cfg.chunk_store_path);
+    std::vector<rag::DocumentSentence> sentences =
+        loadSentenceStoreIfExists(buildSentenceStorePath(retrieval_cfg.chunk_store_path));
     rag::FaissIndex index = rag::FaissIndex::load(retrieval_cfg.index_path);
 
     rag::EmbeddingModel embedding_model(model_cfg.onnx_model_path, model_cfg.tokenizer_json_path);
@@ -249,8 +286,13 @@ int main(int argc, char** argv) {
     if (run_uses_rerank && retrieval_cfg.reranker.backend == "bge") {
       bge_reranker = std::make_unique<rag::BgeReranker>(retrieval_cfg.reranker);
     }
-    rag::RagPipeline pipeline(
-        retriever, prompt_builder, generator, retrieval_cfg.top_k, retrieval_cfg.rerank_candidate_k, bge_reranker.get());
+    rag::RagPipeline pipeline(retriever,
+                              prompt_builder,
+                              generator,
+                              retrieval_cfg.top_k,
+                              retrieval_cfg.rerank_candidate_k,
+                              bge_reranker.get(),
+                              std::move(sentences));
 
     if (batch_mode) {
       const size_t rows_written =

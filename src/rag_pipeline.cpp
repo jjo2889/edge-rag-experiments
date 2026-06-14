@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <chrono>
+#include <utility>
 
 #include "advanced_query_transformer.hpp"
 #include "bge_reranker.hpp"
 #include "contextual_compressor.hpp"
 #include "hyde_transformer.hpp"
 #include "reranker.hpp"
+#include "sentence_window.hpp"
 
 namespace rag {
 
@@ -16,13 +18,15 @@ RagPipeline::RagPipeline(const Retriever& retriever,
                          const Generator& generator,
                          const int top_k,
                          const int rerank_candidate_k,
-                         const BgeReranker* bge_reranker)
+                         const BgeReranker* bge_reranker,
+                         std::vector<DocumentSentence> sentences)
     : retriever_(&retriever),
       prompt_builder_(&prompt_builder),
       generator_(&generator),
       bge_reranker_(bge_reranker),
       top_k_(std::max(1, top_k)),
-      rerank_candidate_k_(std::max(std::max(1, top_k), rerank_candidate_k)) {}
+      rerank_candidate_k_(std::max(std::max(1, top_k), rerank_candidate_k)),
+      sentences_(std::move(sentences)) {}
 
 RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced) const {
   const auto total_start = std::chrono::steady_clock::now();
@@ -54,7 +58,9 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
   const auto rerank_end = std::chrono::steady_clock::now();
 
   const auto context_transform_start = std::chrono::steady_clock::now();
-  if (advanced == AdvancedMode::ContextualCompression) {
+  if (advanced == AdvancedMode::SentenceWindow) {
+    contexts = expandSentenceWindows(query, contexts, sentences_, 1);
+  } else if (advanced == AdvancedMode::ContextualCompression) {
     const GenerationTrace compression_trace =
         generator_->generateWithTrace(buildContextualCompressionPrompt(query, contexts));
     contexts = buildCompressedContexts(compression_trace.output_text, contexts).contexts;

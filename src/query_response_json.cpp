@@ -20,6 +20,13 @@ nlohmann::json buildRetrievedContexts(const RagResult& result) {
     row["rank"] = static_cast<int>(i + 1);
     row["doc_id"] = item.chunk.doc_id;
     row["chunk_id"] = item.chunk.chunk_id;
+    if (item.chunk.doc_chunk_index >= 0) {
+      row["doc_chunk_index"] = item.chunk.doc_chunk_index;
+    }
+    if (item.chunk.sentence_begin >= 0 && item.chunk.sentence_end > item.chunk.sentence_begin) {
+      row["sentence_begin"] = item.chunk.sentence_begin;
+      row["sentence_end"] = item.chunk.sentence_end;
+    }
     row["score"] = item.score;
     if (item.has_rerank_score) {
       row["rerank_score"] = item.rerank_score;

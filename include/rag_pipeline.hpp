@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "advanced_mode.hpp"
 #include "generator.hpp"
@@ -19,7 +20,8 @@ class RagPipeline {
               const Generator& generator,
               int top_k,
               int rerank_candidate_k,
-              const BgeReranker* bge_reranker = nullptr);
+              const BgeReranker* bge_reranker = nullptr,
+              std::vector<DocumentSentence> sentences = {});
 
   RagResult run(const std::string& query, AdvancedMode advanced = AdvancedMode::None) const;
 
@@ -30,6 +32,7 @@ class RagPipeline {
   const BgeReranker* bge_reranker_;
   int top_k_;
   int rerank_candidate_k_;
+  std::vector<DocumentSentence> sentences_;
 };
 
 }  // namespace rag

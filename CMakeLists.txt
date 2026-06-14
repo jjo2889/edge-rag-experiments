@@ -85,6 +85,7 @@ set(RAG_CORE_SOURCES
   src/retriever.cpp
   src/bge_reranker.cpp
   src/reranker.cpp
+  src/sentence_window.cpp
   src/prompt_builder.cpp
   src/generator.cpp
   src/rag_pipeline.cpp
@@ -155,6 +156,8 @@ if(BUILD_RAG_TESTS)
     src/advanced_query_transformer.cpp
     src/hyde_transformer.cpp
     src/contextual_compressor.cpp
+    src/sentence_window.cpp
+    src/text_chunker.cpp
     src/query_request_io.cpp
     src/reranker.cpp)
   target_include_directories(rag_contract_tests PRIVATE

@@ -16,7 +16,16 @@ struct Document {
 
 struct Chunk {
   int64_t chunk_id = -1;
+  int doc_chunk_index = -1;
+  int sentence_begin = -1;
+  int sentence_end = -1;
   std::string doc_id;
+  std::string text;
+};
+
+struct DocumentSentence {
+  std::string doc_id;
+  int sentence_index = -1;
   std::string text;
 };
 

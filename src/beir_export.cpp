@@ -229,11 +229,15 @@ nlohmann::json buildPredictionRow(const std::string& sample_id,
   std::vector<std::string> retrieved_doc_ids;
   std::vector<float> retrieved_scores;
   std::vector<nlohmann::json> retrieved_rerank_scores;
+  std::vector<int> retrieved_sentence_begins;
+  std::vector<int> retrieved_sentence_ends;
   retrieved_contexts.reserve(result.contexts.size());
   retrieved_ranks.reserve(result.contexts.size());
   retrieved_doc_ids.reserve(result.contexts.size());
   retrieved_scores.reserve(result.contexts.size());
   retrieved_rerank_scores.reserve(result.contexts.size());
+  retrieved_sentence_begins.reserve(result.contexts.size());
+  retrieved_sentence_ends.reserve(result.contexts.size());
 
   for (size_t i = 0; i < result.contexts.size(); ++i) {
     const auto& c = result.contexts[i];
@@ -242,6 +246,8 @@ nlohmann::json buildPredictionRow(const std::string& sample_id,
     retrieved_doc_ids.push_back(c.chunk.doc_id);
     retrieved_scores.push_back(c.score);
     retrieved_rerank_scores.push_back(c.has_rerank_score ? nlohmann::json(c.rerank_score) : nlohmann::json(nullptr));
+    retrieved_sentence_begins.push_back(c.chunk.sentence_begin);
+    retrieved_sentence_ends.push_back(c.chunk.sentence_end);
   }
 
   nlohmann::json row;
@@ -259,6 +265,8 @@ nlohmann::json buildPredictionRow(const std::string& sample_id,
   row["retrieved_doc_ids"] = retrieved_doc_ids;
   row["retrieved_scores"] = retrieved_scores;
   row["retrieved_rerank_scores"] = retrieved_rerank_scores;
+  row["retrieved_sentence_begins"] = retrieved_sentence_begins;
+  row["retrieved_sentence_ends"] = retrieved_sentence_ends;
   row["trace"] = query::buildTraceJson(result, memory_mb);
 
   return row;
