@@ -52,6 +52,11 @@ nlohmann::json buildRetrievalConfigJson(const RetrievalConfig& retrieval_cfg) {
   retrieval["data_dir"] = retrieval_cfg.data_dir;
   retrieval["index_path"] = retrieval_cfg.index_path;
   retrieval["chunk_store_path"] = retrieval_cfg.chunk_store_path;
+  retrieval["reranker"] = nlohmann::json{{"backend", retrieval_cfg.reranker.backend},
+                                         {"model_path", nullableString(retrieval_cfg.reranker.model_path)},
+                                         {"sentencepiece_model_path",
+                                          nullableString(retrieval_cfg.reranker.sentencepiece_model_path)},
+                                         {"max_length", retrieval_cfg.reranker.max_length}};
   return retrieval;
 }
 

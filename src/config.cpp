@@ -49,6 +49,32 @@ PromptConfig readPromptConfig(const YAML::Node& node) {
   return cfg;
 }
 
+RerankerConfig readRerankerConfig(const YAML::Node& node) {
+  RerankerConfig cfg;
+  cfg.backend = "lexical";
+  cfg.max_length = 512;
+
+  if (!node) {
+    return cfg;
+  }
+
+  cfg.backend = readOptional<std::string>(node, "backend", cfg.backend);
+  cfg.model_path = readOptional<std::string>(node, "model_path", "");
+  cfg.sentencepiece_model_path = readOptional<std::string>(node, "sentencepiece_model_path", "");
+  cfg.max_length = readOptional<int>(node, "max_length", cfg.max_length);
+  if (cfg.max_length < 8) {
+    throw std::runtime_error("reranker.max_length must be >= 8.");
+  }
+  if (cfg.backend != "lexical" && cfg.backend != "bge") {
+    throw std::runtime_error("Unsupported reranker.backend: " + cfg.backend);
+  }
+  if (cfg.backend == "bge" && (cfg.model_path.empty() || cfg.sentencepiece_model_path.empty())) {
+    throw std::runtime_error("reranker.backend=bge requires model_path and sentencepiece_model_path.");
+  }
+
+  return cfg;
+}
+
 }  // namespace
 
 ModelConfig ConfigLoader::loadModelConfig(const std::string& path) {
@@ -89,6 +115,7 @@ RetrievalConfig ConfigLoader::loadRetrievalConfig(const std::string& path) {
   cfg.chunk_overlap = readRequired<int>(root, "chunk_overlap");
   cfg.top_k = readRequired<int>(root, "top_k");
   cfg.rerank_candidate_k = readOptional<int>(root, "rerank_candidate_k", cfg.top_k * 3);
+  cfg.reranker = readRerankerConfig(root["reranker"]);
   cfg.prompt = readPromptConfig(root["prompt"]);
 
   return cfg;

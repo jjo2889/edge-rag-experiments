@@ -39,6 +39,13 @@ struct PromptConfig {
   std::string output_section;
 };
 
+struct RerankerConfig {
+  std::string backend;
+  std::string model_path;
+  std::string sentencepiece_model_path;
+  int max_length;
+};
+
 struct RetrievalConfig {
   std::string data_dir;
   std::string index_path;
@@ -48,6 +55,7 @@ struct RetrievalConfig {
   int chunk_overlap;
   int top_k;
   int rerank_candidate_k;
+  RerankerConfig reranker;
   PromptConfig prompt;
 };
 
