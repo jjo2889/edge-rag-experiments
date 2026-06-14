@@ -5,6 +5,7 @@
 
 #include "advanced_query_transformer.hpp"
 #include "bge_reranker.hpp"
+#include "contextual_compressor.hpp"
 #include "hyde_transformer.hpp"
 #include "reranker.hpp"
 
@@ -52,6 +53,14 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
   }
   const auto rerank_end = std::chrono::steady_clock::now();
 
+  const auto context_transform_start = std::chrono::steady_clock::now();
+  if (advanced == AdvancedMode::ContextualCompression) {
+    const GenerationTrace compression_trace =
+        generator_->generateWithTrace(buildContextualCompressionPrompt(query, contexts));
+    contexts = buildCompressedContexts(compression_trace.output_text, contexts).contexts;
+  }
+  const auto context_transform_end = std::chrono::steady_clock::now();
+
   const auto prompt_build_start = std::chrono::steady_clock::now();
   const std::string prompt_body = prompt_builder_->buildPrompt(query, contexts);
   const auto prompt_build_end = std::chrono::steady_clock::now();
@@ -76,6 +85,8 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
       std::chrono::duration_cast<std::chrono::milliseconds>(query_transform_end - query_transform_start).count();
   result.retrieve_ms = std::chrono::duration_cast<std::chrono::milliseconds>(retrieve_end - retrieve_start).count();
   result.rerank_ms = std::chrono::duration_cast<std::chrono::milliseconds>(rerank_end - rerank_start).count();
+  result.context_transform_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(context_transform_end - context_transform_start).count();
   result.prompt_build_ms =
       std::chrono::duration_cast<std::chrono::milliseconds>(prompt_build_end - prompt_build_start).count();
   result.generate_ms = std::chrono::duration_cast<std::chrono::milliseconds>(generate_end - generate_start).count();

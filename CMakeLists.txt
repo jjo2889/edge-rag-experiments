@@ -76,6 +76,7 @@ set(RAG_CORE_SOURCES
   src/advanced_mode.cpp
   src/advanced_query_transformer.cpp
   src/hyde_transformer.cpp
+  src/contextual_compressor.cpp
   src/config.cpp
   src/document_loader.cpp
   src/text_chunker.cpp
@@ -153,6 +154,7 @@ if(BUILD_RAG_TESTS)
     src/advanced_mode.cpp
     src/advanced_query_transformer.cpp
     src/hyde_transformer.cpp
+    src/contextual_compressor.cpp
     src/query_request_io.cpp
     src/reranker.cpp)
   target_include_directories(rag_contract_tests PRIVATE
