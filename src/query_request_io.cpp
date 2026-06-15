@@ -45,7 +45,7 @@ std::optional<std::string> readOptionalString(const nlohmann::json& root, const 
 }
 
 void rejectUnsupportedRequestFields(const nlohmann::json& root) {
-  static constexpr std::array<const char*, 5> allowed = {"run_id", "dataset", "split", "sample_id", "question"};
+  static constexpr std::array<const char*, 6> allowed = {"run_id", "dataset", "split", "sample_id", "question", "advanced"};
 
   for (auto it = root.begin(); it != root.end(); ++it) {
     const auto found = std::find_if(allowed.begin(), allowed.end(), [&](const char* key) {
@@ -78,6 +78,7 @@ QueryRequest loadRequestFromJson(const std::string& path) {
   request.split = readOptionalString(root, "split").value_or("");
   request.sample_id = readOptionalString(root, "sample_id").value_or("");
   request.question = readRequiredString(root, "question");
+  request.advanced = advancedModeFromString(readOptionalString(root, "advanced").value_or(""));
   return request;
 }
 

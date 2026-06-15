@@ -228,10 +228,16 @@ nlohmann::json buildPredictionRow(const std::string& sample_id,
   std::vector<int> retrieved_ranks;
   std::vector<std::string> retrieved_doc_ids;
   std::vector<float> retrieved_scores;
+  std::vector<nlohmann::json> retrieved_rerank_scores;
+  std::vector<int> retrieved_sentence_begins;
+  std::vector<int> retrieved_sentence_ends;
   retrieved_contexts.reserve(result.contexts.size());
   retrieved_ranks.reserve(result.contexts.size());
   retrieved_doc_ids.reserve(result.contexts.size());
   retrieved_scores.reserve(result.contexts.size());
+  retrieved_rerank_scores.reserve(result.contexts.size());
+  retrieved_sentence_begins.reserve(result.contexts.size());
+  retrieved_sentence_ends.reserve(result.contexts.size());
 
   for (size_t i = 0; i < result.contexts.size(); ++i) {
     const auto& c = result.contexts[i];
@@ -239,13 +245,18 @@ nlohmann::json buildPredictionRow(const std::string& sample_id,
     retrieved_ranks.push_back(static_cast<int>(i + 1));
     retrieved_doc_ids.push_back(c.chunk.doc_id);
     retrieved_scores.push_back(c.score);
+    retrieved_rerank_scores.push_back(c.has_rerank_score ? nlohmann::json(c.rerank_score) : nlohmann::json(nullptr));
+    retrieved_sentence_begins.push_back(c.chunk.sentence_begin);
+    retrieved_sentence_ends.push_back(c.chunk.sentence_end);
   }
 
   nlohmann::json row;
   row["sample_id"] = sample_id;
   row["dataset"] = dataset;
   row["split"] = split;
+  row["advanced"] = advancedModeToString(result.advanced_mode);
   row["user_input"] = user_input;
+  row["retrieval_query"] = result.retrieval_query;
   row["response"] = result.answer;
   row["retrieved_contexts"] = retrieved_contexts;
   row["reference"] = reference;
@@ -253,6 +264,9 @@ nlohmann::json buildPredictionRow(const std::string& sample_id,
   row["retrieved_ranks"] = retrieved_ranks;
   row["retrieved_doc_ids"] = retrieved_doc_ids;
   row["retrieved_scores"] = retrieved_scores;
+  row["retrieved_rerank_scores"] = retrieved_rerank_scores;
+  row["retrieved_sentence_begins"] = retrieved_sentence_begins;
+  row["retrieved_sentence_ends"] = retrieved_sentence_ends;
   row["trace"] = query::buildTraceJson(result, memory_mb);
 
   return row;
@@ -275,6 +289,7 @@ void writeManifestJson(const BeirExportOptions& options,
   manifest["status"] = "ok";
   manifest["dataset"] = options.dataset;
   manifest["split"] = options.split;
+  manifest["advanced"] = advancedModeToString(options.advanced);
   manifest["output_jsonl"] = options.output_jsonl_path;
   manifest["rows_written"] = rows_written;
   manifest["inputs"] =
@@ -283,7 +298,7 @@ void writeManifestJson(const BeirExportOptions& options,
                      {"corpus", options.corpus_path}};
   manifest["reference_policy"] = "qrels_positive_docs_title_plus_text_concat";
   manifest["run_config"] =
-      query::buildRunConfigJson(model_cfg, retrieval_cfg, model_config_path, retrieval_config_path);
+      query::buildRunConfigJson(model_cfg, retrieval_cfg, model_config_path, retrieval_config_path, options.advanced);
 
   std::ofstream out(manifest_path);
   if (!out) {
@@ -346,7 +361,7 @@ size_t exportBeirPredictionsJsonl(const RagPipeline& pipeline,
         (qrel_it == qrels.end()) ? std::vector<std::string>() : qrel_it->second;
     const std::string reference = buildReferenceFromQrels(qrel_doc_ids, corpus_by_id);
 
-    const RagResult result = pipeline.run(query_it->second);
+    const RagResult result = pipeline.run(query_it->second, options.advanced);
     const double memory_mb = query::getResidentMemoryMb();
     if (isBlank(result.answer)) {
       throw std::runtime_error("Empty response generated for sample_id=" + sample_id);

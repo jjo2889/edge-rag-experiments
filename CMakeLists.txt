@@ -32,11 +32,30 @@ if(FAISS_ROOT)
 endif()
 list(PREPEND CMAKE_PREFIX_PATH "${ONNXRUNTIME_ROOT}")
 
+set(SENTENCEPIECE_ROOT_DEFAULT "${CMAKE_SOURCE_DIR}/third_party/sentencepiece-install")
+set(SENTENCEPIECE_ROOT "${SENTENCEPIECE_ROOT_DEFAULT}" CACHE PATH "Optional SentencePiece install prefix")
+if(DEFINED ENV{SENTENCEPIECE_ROOT} AND NOT "$ENV{SENTENCEPIECE_ROOT}" STREQUAL "")
+  set(SENTENCEPIECE_ROOT "$ENV{SENTENCEPIECE_ROOT}" CACHE PATH "Optional SentencePiece install prefix" FORCE)
+endif()
+
 find_package(OpenMP REQUIRED)
 find_package(faiss CONFIG REQUIRED)
 find_package(yaml-cpp REQUIRED)
 find_package(onnxruntime CONFIG REQUIRED
   HINTS "${ONNXRUNTIME_ROOT}")
+
+find_path(SENTENCEPIECE_INCLUDE_DIR
+  NAMES sentencepiece_processor.h
+  PATHS "${SENTENCEPIECE_ROOT}/include")
+find_library(SENTENCEPIECE_LIBRARY
+  NAMES sentencepiece
+  PATHS "${SENTENCEPIECE_ROOT}/lib" "${SENTENCEPIECE_ROOT}/lib64")
+
+if(SENTENCEPIECE_INCLUDE_DIR AND SENTENCEPIECE_LIBRARY)
+  set(RAG_HAS_SENTENCEPIECE 1)
+else()
+  set(RAG_HAS_SENTENCEPIECE 0)
+endif()
 
 if(TARGET yaml-cpp::yaml-cpp)
   set(YAMLCPP_TARGET yaml-cpp::yaml-cpp)
@@ -54,12 +73,19 @@ find_library(LLAMA_LIBRARY
   REQUIRED)
 
 set(RAG_CORE_SOURCES
+  src/advanced_mode.cpp
+  src/advanced_query_transformer.cpp
+  src/hyde_transformer.cpp
+  src/contextual_compressor.cpp
   src/config.cpp
   src/document_loader.cpp
   src/text_chunker.cpp
   src/embedding_model.cpp
   src/faiss_index.cpp
   src/retriever.cpp
+  src/bge_reranker.cpp
+  src/reranker.cpp
+  src/sentence_window.cpp
   src/prompt_builder.cpp
   src/generator.cpp
   src/rag_pipeline.cpp
@@ -77,6 +103,12 @@ target_include_directories(rag_core
     "${LLAMA_CPP_ROOT}/ggml/include"
     "${LLAMA_CPP_ROOT}/vendor")
 
+if(RAG_HAS_SENTENCEPIECE)
+  target_include_directories(rag_core PUBLIC "${SENTENCEPIECE_INCLUDE_DIR}")
+endif()
+
+target_compile_definitions(rag_core PUBLIC RAG_HAS_SENTENCEPIECE=${RAG_HAS_SENTENCEPIECE})
+
 target_compile_options(rag_core PRIVATE -Wall -Wextra -Wpedantic)
 
 target_link_libraries(rag_core
@@ -86,6 +118,10 @@ target_link_libraries(rag_core
     OpenMP::OpenMP_CXX
     ${YAMLCPP_TARGET}
     ${LLAMA_LIBRARY})
+
+if(RAG_HAS_SENTENCEPIECE)
+  target_link_libraries(rag_core PUBLIC "${SENTENCEPIECE_LIBRARY}")
+endif()
 
 set(RAG_LOCAL_RPATH
   "${LLAMA_CPP_ROOT}/build/bin;${LLAMA_CPP_ROOT}/build/src;${ONNXRUNTIME_ROOT}/lib;${ONNXRUNTIME_ROOT}/lib64")
@@ -107,4 +143,26 @@ if(BUILD_RAG_HTTP_SERVER)
     "${CMAKE_SOURCE_DIR}/server/third_party/cpp-httplib"
     "${LLAMA_CPP_ROOT}/vendor")
   set_target_properties(rag_http_server PROPERTIES BUILD_RPATH "${RAG_LOCAL_RPATH}")
+endif()
+
+option(BUILD_RAG_TESTS "Build RAG test executables" OFF)
+
+if(BUILD_RAG_TESTS)
+  enable_testing()
+
+  add_executable(rag_contract_tests
+    tests/advanced_contract_test.cpp
+    src/advanced_mode.cpp
+    src/advanced_query_transformer.cpp
+    src/hyde_transformer.cpp
+    src/contextual_compressor.cpp
+    src/sentence_window.cpp
+    src/text_chunker.cpp
+    src/query_request_io.cpp
+    src/reranker.cpp)
+  target_include_directories(rag_contract_tests PRIVATE
+    "${CMAKE_SOURCE_DIR}/include"
+    "${LLAMA_CPP_ROOT}/vendor")
+  target_compile_options(rag_contract_tests PRIVATE -Wall -Wextra -Wpedantic)
+  add_test(NAME rag_contract_tests COMMAND rag_contract_tests)
 endif()

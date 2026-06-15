@@ -5,6 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "advanced_mode.hpp"
 #include "config.hpp"
 #include "query_request_io.hpp"
 #include "types.hpp"
@@ -16,7 +17,8 @@ double getResidentMemoryMb();
 nlohmann::json buildRunConfigJson(const ModelConfig& model_cfg,
                                   const RetrievalConfig& retrieval_cfg,
                                   const std::string& model_config_path,
-                                  const std::string& retrieval_config_path);
+                                  const std::string& retrieval_config_path,
+                                  AdvancedMode advanced);
 
 nlohmann::json buildTraceJson(const RagResult& result, double memory_mb);
 

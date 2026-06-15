@@ -1,6 +1,7 @@
 #include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -9,8 +10,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include "advanced_mode.hpp"
 #include "app_cli.hpp"
 #include "beir_export.hpp"
+#include "bge_reranker.hpp"
 #include "config.hpp"
 #include "embedding_model.hpp"
 #include "faiss_index.hpp"
@@ -29,15 +32,21 @@ struct QueryCliOptions {
   std::string question;
   std::string request_json_path;
   rag::BeirExportOptions beir_export;
+  rag::AdvancedMode advanced = rag::AdvancedMode::None;
   bool question_provided = false;
+  bool advanced_provided = false;
   bool show_help = false;
 };
 
 void printUsage() {
   std::cout << "Usage: rag_query [--model_config path] [--retrieval_config path] --request_json path\n";
-  std::cout << "       rag_query [--model_config path] [--retrieval_config path] --question \"...\"\n";
+  std::cout << "       rag_query [--model_config path] [--retrieval_config path] [--advanced mode] --question \"...\"\n";
   std::cout << "       rag_query --dataset name --split name --questions path --qrels path --corpus path "
-               "--output_jsonl path [--limit N]\n";
+               "--output_jsonl path [--advanced mode] [--limit N]\n";
+}
+
+std::string buildSentenceStorePath(const std::string& chunk_store_path) {
+  return chunk_store_path + ".sentences.jsonl";
 }
 
 std::vector<rag::Chunk> loadChunkStore(const std::string& path) {
@@ -55,11 +64,42 @@ std::vector<rag::Chunk> loadChunkStore(const std::string& path) {
     auto j = nlohmann::json::parse(line);
     rag::Chunk chunk;
     chunk.chunk_id = j.at("chunk_id").get<int64_t>();
+    if (j.contains("doc_chunk_index") && j.at("doc_chunk_index").is_number_integer()) {
+      chunk.doc_chunk_index = j.at("doc_chunk_index").get<int>();
+    }
+    if (j.contains("sentence_begin") && j.at("sentence_begin").is_number_integer()) {
+      chunk.sentence_begin = j.at("sentence_begin").get<int>();
+    }
+    if (j.contains("sentence_end") && j.at("sentence_end").is_number_integer()) {
+      chunk.sentence_end = j.at("sentence_end").get<int>();
+    }
     chunk.doc_id = j.at("doc_id").get<std::string>();
     chunk.text = j.at("text").get<std::string>();
     chunks.push_back(std::move(chunk));
   }
   return chunks;
+}
+
+std::vector<rag::DocumentSentence> loadSentenceStoreIfExists(const std::string& path) {
+  std::ifstream in(path);
+  if (!in) {
+    return {};
+  }
+
+  std::vector<rag::DocumentSentence> sentences;
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty()) {
+      continue;
+    }
+    auto j = nlohmann::json::parse(line);
+    rag::DocumentSentence sentence;
+    sentence.doc_id = j.at("doc_id").get<std::string>();
+    sentence.sentence_index = j.at("sentence_index").get<int>();
+    sentence.text = j.at("text").get<std::string>();
+    sentences.push_back(std::move(sentence));
+  }
+  return sentences;
 }
 
 QueryCliOptions parseQueryCliOptions(int argc, char** argv) {
@@ -77,6 +117,13 @@ QueryCliOptions parseQueryCliOptions(int argc, char** argv) {
       }
       options.question = argv[++i];
       options.question_provided = true;
+    } else if (arg == "--advanced") {
+      if (i + 1 >= argc) {
+        throw std::runtime_error("Missing value for --advanced");
+      }
+      options.advanced = rag::advancedModeFromString(argv[++i]);
+      options.advanced_provided = true;
+      options.beir_export.advanced = options.advanced;
     } else if (arg == "--request_json") {
       if (i + 1 >= argc) {
         throw std::runtime_error("Missing value for --request_json");
@@ -158,6 +205,9 @@ void validateQueryCliOptions(const QueryCliOptions& options) {
   if (options.question_provided && !options.request_json_path.empty()) {
     throw std::runtime_error("Use either --question or --request_json, not both.");
   }
+  if (options.advanced_provided && !options.request_json_path.empty()) {
+    throw std::runtime_error("Use advanced in request JSON when using --request_json.");
+  }
   if (!options.question_provided && options.request_json_path.empty()) {
     throw std::runtime_error("Single query mode requires --request_json or --question.");
   }
@@ -213,18 +263,36 @@ int main(int argc, char** argv) {
       rag::query::QueryRequest request =
           cli.request_json_path.empty() ? rag::query::buildQuestionRequest(cli.question)
                                         : rag::query::loadRequestFromJson(cli.request_json_path);
+      if (cli.request_json_path.empty()) {
+        request.advanced = cli.advanced;
+      }
       request_for_error = request;
       rag::query::validateRequest(*request_for_error);
     }
 
     std::vector<rag::Chunk> chunks = loadChunkStore(retrieval_cfg.chunk_store_path);
+    std::vector<rag::DocumentSentence> sentences =
+        loadSentenceStoreIfExists(buildSentenceStorePath(retrieval_cfg.chunk_store_path));
     rag::FaissIndex index = rag::FaissIndex::load(retrieval_cfg.index_path);
 
     rag::EmbeddingModel embedding_model(model_cfg.onnx_model_path, model_cfg.tokenizer_json_path);
     rag::Retriever retriever(embedding_model, std::move(index), std::move(chunks));
     rag::PromptBuilder prompt_builder(retrieval_cfg.prompt);
     rag::Generator generator(model_cfg);
-    rag::RagPipeline pipeline(retriever, prompt_builder, generator, retrieval_cfg.top_k);
+    std::unique_ptr<rag::BgeReranker> bge_reranker;
+    const bool run_uses_rerank =
+        batch_mode ? cli.beir_export.advanced == rag::AdvancedMode::Rerank
+                   : request_for_error && request_for_error->advanced == rag::AdvancedMode::Rerank;
+    if (run_uses_rerank && retrieval_cfg.reranker.backend == "bge") {
+      bge_reranker = std::make_unique<rag::BgeReranker>(retrieval_cfg.reranker);
+    }
+    rag::RagPipeline pipeline(retriever,
+                              prompt_builder,
+                              generator,
+                              retrieval_cfg.top_k,
+                              retrieval_cfg.rerank_candidate_k,
+                              bge_reranker.get(),
+                              std::move(sentences));
 
     if (batch_mode) {
       const size_t rows_written =
@@ -247,7 +315,7 @@ int main(int argc, char** argv) {
       return 0;
     }
 
-    const rag::RagResult result = pipeline.run(request_for_error->question);
+    const rag::RagResult result = pipeline.run(request_for_error->question, request_for_error->advanced);
     const double memory_mb = rag::query::getResidentMemoryMb();
 
     const nlohmann::json output = rag::query::buildSingleRunSuccessJson(*request_for_error,

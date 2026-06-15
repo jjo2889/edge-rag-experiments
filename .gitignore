@@ -37,12 +37,15 @@
 /models/**/special_tokens_map.json
 /models/**/vocab*.txt
 /models/**/config.json
+/models/**/sentencepiece*.model
 
 # -----------------------------
 # Third-party dependencies (repro via setup scripts)
 # -----------------------------
 /third_party/llama.cpp/
 /third_party/onnxruntime-linux-x64-1.24.3/
+/third_party/sentencepiece/
+/third_party/sentencepiece-install/
 /third_party/*.tgz
 
 # -----------------------------

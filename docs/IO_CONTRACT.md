@@ -35,6 +35,7 @@
 | `dataset` | string \| null | 실험 데이터셋 이름. 예: `scifact`, `nq` |
 | `split` | string \| null | 데이터셋 분할 이름. 예: `train`, `dev`, `test` |
 | `sample_id` | string \| null | `dataset`/`split` 안에서 샘플을 식별하는 ID |
+| `advanced` | string | Advanced RAG mode. 기본값은 `none` |
 
 `mode` 값:
 
@@ -50,7 +51,10 @@
 | 필드 | 타입 | 의미 |
 |---|---|---|
 | `latency_ms.total` | integer | 검색 시작부터 생성 종료까지의 wall-clock 시간(ms) |
+| `latency_ms.query_transform` | integer | advanced query transform 시간(ms). 미사용 시 0 |
 | `latency_ms.retrieval` | integer | query embedding과 vector search 시간(ms) |
+| `latency_ms.rerank` | integer | rerank 시간(ms). 미사용 시 0 |
+| `latency_ms.context_transform` | integer | retrieved context 변환/압축/window 확장 시간(ms). 미사용 시 0 |
 | `latency_ms.prompt_build` | integer | retrieved context를 prompt body로 구성한 시간(ms) |
 | `latency_ms.generation` | integer | LLM 생성 시간(ms) |
 | `output_tokens_per_sec` | number | `output_tokens / generation elapsed seconds` |
@@ -59,6 +63,7 @@
 | `prompt_tokens` | integer | 실제 모델 입력에 사용된 prompt token 수 |
 | `output_tokens` | integer | 생성된 token 수 |
 | `prompt_truncated` | boolean | context window 제한으로 prompt가 잘렸는지 여부 |
+| `retrieval_query` | string | 검색에 실제 사용한 query |
 
 ## 단일 실행
 
@@ -87,6 +92,7 @@ JSON 파일에서 질문과 샘플 식별 정보를 읽어 실행한다.
 | `dataset` | 선택 | string | 데이터셋 이름 |
 | `split` | 선택 | string | 데이터셋 분할 이름 |
 | `sample_id` | 선택 | string | 샘플 ID |
+| `advanced` | 선택 | string | Advanced RAG mode. 기본값은 `none` |
 
 예시:
 
@@ -95,11 +101,13 @@ JSON 파일에서 질문과 샘플 식별 정보를 읽어 실행한다.
   "dataset": "scifact",
   "split": "test",
   "sample_id": "1",
+  "advanced": "none",
   "question": "0-dimensional biomaterials lack inductive properties."
 }
 ```
 
 Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, sampling, 검색 top-k, 프롬프트 경로는 config 파일에서 지정한다.
+지원하는 `advanced` 값은 `none`, `query_rewrite`, `hyde`, `rerank`, `sentence_window`, `contextual_compression`이다.
 
 ### Output JSON
 
@@ -112,8 +120,10 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
 | `status` | string | `ok` 또는 `error` |
 | `error` | object \| null | 실패 메시지 |
 | `mode` | string | 출력 종류와 실행 경로를 구분하는 식별자 |
+| `advanced` | string | Advanced RAG mode |
 | `request` | object | 입력 질의와 샘플 식별 정보 |
 | `answer` | string | 모델 응답 |
+| `retrieval_query` | string \| null | 검색에 실제 사용한 query. 실패 시 `null` |
 | `retrieved_contexts` | array | 검색된 context 목록 |
 | `run_config` | object \| null | 실제 실행 설정 |
 | `trace` | object | latency, throughput, memory, token count, truncation 등 실행 관측값 |
@@ -126,6 +136,7 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
 | `dataset` | string \| null | 데이터셋 이름 |
 | `split` | string \| null | 데이터셋 분할 이름 |
 | `sample_id` | string \| null | 샘플 ID |
+| `advanced` | string | Advanced RAG mode |
 | `question` | string \| null | 질의문 |
 
 `retrieved_contexts[]`:
@@ -135,7 +146,11 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
 | `rank` | integer | 1부터 시작하는 검색 순위 |
 | `doc_id` | string | 원문 문서 ID |
 | `chunk_id` | integer | chunk store 내 chunk ID |
+| `doc_chunk_index` | integer | 문서 내부 chunk 순서. legacy chunk store에서는 생략될 수 있음 |
+| `sentence_begin` | integer | context text가 대응하는 문서 내 시작 sentence index. legacy chunk store에서는 생략될 수 있음 |
+| `sentence_end` | integer | context text가 대응하는 문서 내 exclusive end sentence index. legacy chunk store에서는 생략될 수 있음 |
 | `score` | number | retriever 원점수. 검색 순서는 `rank`를 기준으로 해석한다. |
+| `rerank_score` | number | rerank 적용 시 reranker 점수 |
 | `text` | string | context text |
 
 `run_config`:
@@ -144,6 +159,7 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
 |---|---|---|
 | `model_config_path` | string \| null | model config 경로 |
 | `retrieval_config_path` | string \| null | retrieval config 경로 |
+| `advanced` | string | Advanced RAG mode |
 | `generation` | object | 생성 설정 |
 | `retrieval` | object | 검색 설정 |
 | `prompt` | object | 프롬프트 설정 |
@@ -160,11 +176,16 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
 
 `retrieval`:
 - `top_k`
+- `rerank_candidate_k`
 - `chunk_size`
 - `chunk_overlap`
 - `data_dir`
 - `index_path`
 - `chunk_store_path`
+- `reranker.backend`
+- `reranker.model_path`
+- `reranker.sentencepiece_model_path`
+- `reranker.max_length`
 
 `prompt`:
 - `system_prompt_path`
@@ -186,14 +207,17 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
   "status": "ok",
   "error": null,
   "mode": "naive_rag",
+  "advanced": "none",
   "request": {
     "run_id": null,
     "dataset": "scifact",
     "split": "test",
     "sample_id": "1",
+    "advanced": "none",
     "question": "0-dimensional biomaterials lack inductive properties."
   },
   "answer": "The retrieved evidence does not support the claim.",
+  "retrieval_query": "0-dimensional biomaterials lack inductive properties.",
   "retrieved_contexts": [
     {
       "rank": 1,
@@ -206,6 +230,7 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
   "run_config": {
     "model_config_path": "configs/model.yaml",
     "retrieval_config_path": "configs/retrieval_scifact.yaml",
+    "advanced": "none",
     "generation": {
       "max_new_tokens": 128,
       "temperature": 0.3,
@@ -218,11 +243,18 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
     },
     "retrieval": {
       "top_k": 3,
+      "rerank_candidate_k": 9,
       "chunk_size": 256,
       "chunk_overlap": 32,
       "data_dir": "data/beir/scifact_corpus",
       "index_path": "data/indexes/scifact/faiss.index",
-      "chunk_store_path": "data/indexes/scifact/chunks.jsonl"
+      "chunk_store_path": "data/indexes/scifact/chunks.jsonl",
+      "reranker": {
+        "backend": "lexical",
+        "model_path": null,
+        "sentencepiece_model_path": null,
+        "max_length": 512
+      }
     },
     "prompt": {
       "system_prompt_path": "configs/prompt_system_scifact.txt",
@@ -237,7 +269,10 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
   "trace": {
     "latency_ms": {
       "total": 1320,
+      "query_transform": 0,
       "retrieval": 24,
+      "rerank": 0,
+      "context_transform": 0,
       "prompt_build": 1,
       "generation": 1295
     },
@@ -246,7 +281,8 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
     "prompt_tokens_before_truncation": 680,
     "prompt_tokens": 680,
     "output_tokens": 16,
-    "prompt_truncated": false
+    "prompt_truncated": false,
+    "retrieval_query": "0-dimensional biomaterials lack inductive properties."
   }
 }
 ```
@@ -260,11 +296,14 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
     "message": "Request field question must not be blank."
   },
   "mode": "naive_rag",
+  "advanced": "none",
+  "retrieval_query": null,
   "request": {
     "run_id": null,
     "dataset": null,
     "split": null,
     "sample_id": null,
+    "advanced": "none",
     "question": ""
   },
   "answer": "",
@@ -273,7 +312,10 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
   "trace": {
     "latency_ms": {
       "total": 0,
+      "query_transform": 0,
       "retrieval": 0,
+      "rerank": 0,
+      "context_transform": 0,
       "prompt_build": 0,
       "generation": 0
     },
@@ -282,7 +324,8 @@ Request JSON은 질문과 샘플 식별 정보만 포함한다. 생성 길이, s
     "prompt_tokens_before_truncation": 0,
     "prompt_tokens": 0,
     "output_tokens": 0,
-    "prompt_truncated": false
+    "prompt_truncated": false,
+    "retrieval_query": ""
   }
 }
 ```
@@ -351,7 +394,9 @@ qrels TSV 컬럼:
 | `sample_id` | string | 데이터셋 내 샘플 ID |
 | `dataset` | string | 데이터셋 이름 |
 | `split` | string | 데이터셋 분할 이름 |
+| `advanced` | string | Advanced RAG mode |
 | `user_input` | string | RAGAS `user_input` |
+| `retrieval_query` | string | 검색에 실제 사용한 query |
 | `response` | string | RAGAS `response` |
 | `retrieved_contexts` | array[string] | RAGAS `retrieved_contexts` |
 | `reference` | string | RAGAS `reference` |
@@ -359,11 +404,16 @@ qrels TSV 컬럼:
 | `qrel_doc_ids` | array[string] | positive qrels 문서 ID |
 | `retrieved_doc_ids` | array[string] | 검색된 문서 ID |
 | `retrieved_scores` | array[number] | retriever 원점수 |
+| `retrieved_rerank_scores` | array[number \| null] | rerank 적용 시 reranker 점수. 미적용 시 `null` |
+| `retrieved_sentence_begins` | array[integer] | 각 context의 문서 내 시작 sentence index. metadata가 없으면 `-1` |
+| `retrieved_sentence_ends` | array[integer] | 각 context의 문서 내 exclusive end sentence index. metadata가 없으면 `-1` |
 | `trace` | object | 샘플별 실행 trace |
 
 RAGAS 입력으로 직접 쓰는 필드는 `user_input`, `response`, `retrieved_contexts`, `reference`이다.
 배치 row의 `retrieved_contexts`는 RAGAS 입력 형식에 맞춘 string 배열이다. 검색 metadata는 `retrieved_ranks`, `retrieved_doc_ids`, `retrieved_scores`, `trace`에 분리해 기록한다.
 `retrieved_contexts`, `retrieved_ranks`, `retrieved_doc_ids`, `retrieved_scores`는 같은 길이의 배열이며, 같은 index가 같은 검색 결과를 의미한다.
+`retrieved_rerank_scores`도 같은 길이이며, rerank 미적용 row에서는 각 값이 `null`이다.
+`retrieved_sentence_begins`와 `retrieved_sentence_ends`도 같은 길이이며, sentence metadata가 없는 legacy row에서는 `-1`이다.
 
 prediction JSONL row 예시:
 
@@ -372,7 +422,9 @@ prediction JSONL row 예시:
   "sample_id": "1",
   "dataset": "scifact",
   "split": "test",
+  "advanced": "none",
   "user_input": "0-dimensional biomaterials lack inductive properties.",
+  "retrieval_query": "0-dimensional biomaterials lack inductive properties.",
   "response": "The retrieved evidence does not support the claim.",
   "retrieved_contexts": [
     "..."
@@ -390,10 +442,22 @@ prediction JSONL row 예시:
   "retrieved_scores": [
     0.8123
   ],
+  "retrieved_rerank_scores": [
+    null
+  ],
+  "retrieved_sentence_begins": [
+    0
+  ],
+  "retrieved_sentence_ends": [
+    2
+  ],
   "trace": {
     "latency_ms": {
       "total": 1320,
+      "query_transform": 0,
       "retrieval": 24,
+      "rerank": 0,
+      "context_transform": 0,
       "prompt_build": 1,
       "generation": 1295
     },
@@ -402,7 +466,8 @@ prediction JSONL row 예시:
     "prompt_tokens_before_truncation": 680,
     "prompt_tokens": 680,
     "output_tokens": 16,
-    "prompt_truncated": false
+    "prompt_truncated": false,
+    "retrieval_query": "0-dimensional biomaterials lack inductive properties."
   }
 }
 ```

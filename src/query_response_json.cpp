@@ -20,7 +20,17 @@ nlohmann::json buildRetrievedContexts(const RagResult& result) {
     row["rank"] = static_cast<int>(i + 1);
     row["doc_id"] = item.chunk.doc_id;
     row["chunk_id"] = item.chunk.chunk_id;
+    if (item.chunk.doc_chunk_index >= 0) {
+      row["doc_chunk_index"] = item.chunk.doc_chunk_index;
+    }
+    if (item.chunk.sentence_begin >= 0 && item.chunk.sentence_end > item.chunk.sentence_begin) {
+      row["sentence_begin"] = item.chunk.sentence_begin;
+      row["sentence_end"] = item.chunk.sentence_end;
+    }
     row["score"] = item.score;
+    if (item.has_rerank_score) {
+      row["rerank_score"] = item.rerank_score;
+    }
     row["text"] = item.chunk.text;
     contexts.push_back(std::move(row));
   }
@@ -43,11 +53,17 @@ nlohmann::json buildGenerationConfigJson(const ModelConfig& model_cfg) {
 nlohmann::json buildRetrievalConfigJson(const RetrievalConfig& retrieval_cfg) {
   nlohmann::json retrieval;
   retrieval["top_k"] = retrieval_cfg.top_k;
+  retrieval["rerank_candidate_k"] = retrieval_cfg.rerank_candidate_k;
   retrieval["chunk_size"] = retrieval_cfg.chunk_size;
   retrieval["chunk_overlap"] = retrieval_cfg.chunk_overlap;
   retrieval["data_dir"] = retrieval_cfg.data_dir;
   retrieval["index_path"] = retrieval_cfg.index_path;
   retrieval["chunk_store_path"] = retrieval_cfg.chunk_store_path;
+  retrieval["reranker"] = nlohmann::json{{"backend", retrieval_cfg.reranker.backend},
+                                         {"model_path", nullableString(retrieval_cfg.reranker.model_path)},
+                                         {"sentencepiece_model_path",
+                                          nullableString(retrieval_cfg.reranker.sentencepiece_model_path)},
+                                         {"max_length", retrieval_cfg.reranker.max_length}};
   return retrieval;
 }
 
@@ -66,7 +82,10 @@ nlohmann::json buildPromptConfigJson(const ModelConfig& model_cfg, const Retriev
 nlohmann::json buildLatencyJson(const RagResult& result) {
   nlohmann::json latency_ms;
   latency_ms["total"] = result.total_ms;
+  latency_ms["query_transform"] = result.query_transform_ms;
   latency_ms["retrieval"] = result.retrieve_ms;
+  latency_ms["rerank"] = result.rerank_ms;
+  latency_ms["context_transform"] = result.context_transform_ms;
   latency_ms["prompt_build"] = result.prompt_build_ms;
   latency_ms["generation"] = result.generate_ms;
   return latency_ms;
@@ -75,7 +94,10 @@ nlohmann::json buildLatencyJson(const RagResult& result) {
 nlohmann::json buildEmptyLatencyJson() {
   nlohmann::json latency_ms;
   latency_ms["total"] = 0;
+  latency_ms["query_transform"] = 0;
   latency_ms["retrieval"] = 0;
+  latency_ms["rerank"] = 0;
+  latency_ms["context_transform"] = 0;
   latency_ms["prompt_build"] = 0;
   latency_ms["generation"] = 0;
   return latency_ms;
@@ -90,6 +112,7 @@ nlohmann::json buildEmptyTraceJson() {
   trace["prompt_tokens"] = 0;
   trace["output_tokens"] = 0;
   trace["prompt_truncated"] = false;
+  trace["retrieval_query"] = "";
   return trace;
 }
 
@@ -132,16 +155,19 @@ nlohmann::json buildTraceJson(const RagResult& result, const double memory_mb) {
   trace["prompt_tokens"] = result.prompt_tokens;
   trace["output_tokens"] = result.output_tokens;
   trace["prompt_truncated"] = result.prompt_truncated;
+  trace["retrieval_query"] = result.retrieval_query;
   return trace;
 }
 
 nlohmann::json buildRunConfigJson(const ModelConfig& model_cfg,
                                   const RetrievalConfig& retrieval_cfg,
                                   const std::string& model_config_path,
-                                  const std::string& retrieval_config_path) {
+                                  const std::string& retrieval_config_path,
+                                  const AdvancedMode advanced) {
   nlohmann::json run_config;
   run_config["model_config_path"] = nullableString(model_config_path);
   run_config["retrieval_config_path"] = nullableString(retrieval_config_path);
+  run_config["advanced"] = advancedModeToString(advanced);
   run_config["generation"] = buildGenerationConfigJson(model_cfg);
   run_config["retrieval"] = buildRetrievalConfigJson(retrieval_cfg);
   run_config["prompt"] = buildPromptConfigJson(model_cfg, retrieval_cfg);
@@ -159,14 +185,18 @@ nlohmann::json buildSingleRunSuccessJson(const QueryRequest& request,
   output["status"] = "ok";
   output["error"] = nullptr;
   output["mode"] = "naive_rag";
+  output["advanced"] = advancedModeToString(request.advanced);
+  output["retrieval_query"] = result.retrieval_query;
   output["request"] = nlohmann::json{{"run_id", nullableString(request.run_id)},
                                      {"dataset", nullableString(request.dataset)},
                                      {"split", nullableString(request.split)},
                                      {"sample_id", nullableString(request.sample_id)},
+                                     {"advanced", advancedModeToString(request.advanced)},
                                      {"question", request.question}};
   output["answer"] = result.answer;
   output["retrieved_contexts"] = buildRetrievedContexts(result);
-  output["run_config"] = buildRunConfigJson(model_cfg, retrieval_cfg, model_config_path, retrieval_config_path);
+  output["run_config"] =
+      buildRunConfigJson(model_cfg, retrieval_cfg, model_config_path, retrieval_config_path, request.advanced);
   output["trace"] = buildTraceJson(result, memory_mb);
   return output;
 }
@@ -176,11 +206,14 @@ nlohmann::json buildSingleRunErrorJson(const std::optional<QueryRequest>& reques
   output["status"] = "error";
   output["error"] = nlohmann::json{{"message", message}};
   output["mode"] = "naive_rag";
+  output["advanced"] = request ? advancedModeToString(request->advanced) : "none";
+  output["retrieval_query"] = nullptr;
   output["request"] = nlohmann::json{
       {"run_id", request ? nullableString(request->run_id) : nlohmann::json(nullptr)},
       {"dataset", request ? nullableString(request->dataset) : nlohmann::json(nullptr)},
       {"split", request ? nullableString(request->split) : nlohmann::json(nullptr)},
       {"sample_id", request ? nullableString(request->sample_id) : nlohmann::json(nullptr)},
+      {"advanced", request ? nlohmann::json(advancedModeToString(request->advanced)) : nlohmann::json("none")},
       {"question", request ? nlohmann::json(request->question) : nlohmann::json(nullptr)}};
   output["answer"] = "";
   output["retrieved_contexts"] = nlohmann::json::array();

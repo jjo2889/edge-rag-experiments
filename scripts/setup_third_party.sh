@@ -5,6 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 THIRD_PARTY_DIR="${ROOT_DIR}/third_party"
 LLAMA_DIR="${THIRD_PARTY_DIR}/llama.cpp"
 LLAMA_REF="${LLAMA_REF:-f5ddcd1696ec}"
+SENTENCEPIECE_DIR="${THIRD_PARTY_DIR}/sentencepiece"
+SENTENCEPIECE_INSTALL_DIR="${THIRD_PARTY_DIR}/sentencepiece-install"
+SENTENCEPIECE_REF="${SENTENCEPIECE_REF:-v0.2.0}"
 
 ORT_VERSION="${ORT_VERSION:-1.24.3}"
 ORT_ARCHIVE="onnxruntime-linux-x64-${ORT_VERSION}.tgz"
@@ -22,6 +25,7 @@ need_cmd() {
 need_cmd git
 need_cmd curl
 need_cmd tar
+need_cmd cmake
 
 mkdir -p "${THIRD_PARTY_DIR}"
 
@@ -62,6 +66,22 @@ if [ ! -e "${ORT_DIR}/include/onnxruntime" ]; then
   ln -s . "${ORT_DIR}/include/onnxruntime"
   echo "[ok] created ${ORT_DIR}/include/onnxruntime -> ."
 fi
+
+echo "[setup] sentencepiece ${SENTENCEPIECE_REF}"
+if [ ! -d "${SENTENCEPIECE_DIR}/.git" ]; then
+  git clone https://github.com/google/sentencepiece.git "${SENTENCEPIECE_DIR}"
+else
+  git -C "${SENTENCEPIECE_DIR}" fetch --tags origin
+fi
+
+git -C "${SENTENCEPIECE_DIR}" checkout "${SENTENCEPIECE_REF}"
+cmake -S "${SENTENCEPIECE_DIR}" -B "${SENTENCEPIECE_DIR}/build" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX="${SENTENCEPIECE_INSTALL_DIR}" \
+  -DSPM_ENABLE_SHARED=ON \
+  -DSPM_BUILD_TEST=OFF
+cmake --build "${SENTENCEPIECE_DIR}/build" -j
+cmake --install "${SENTENCEPIECE_DIR}/build"
 
 echo "[done] third_party setup complete"
 echo "[next] run: scripts/rebuild_llama.sh"
