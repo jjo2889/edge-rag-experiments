@@ -46,6 +46,10 @@
 /third_party/onnxruntime-linux-x64-1.24.3/
 /third_party/sentencepiece/
 /third_party/sentencepiece-install/
+/third_party/faiss/
+/third_party/faiss-install/
+/third_party/yaml-cpp/
+/third_party/yaml-cpp-install/
 /third_party/*.tgz
 
 # -----------------------------

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -57,6 +58,9 @@ struct RagResult {
   int64_t total_ms = 0;
   double output_tokens_per_sec = 0.0;
   std::vector<RetrievedChunk> contexts;
+  // Set only when advanced_mode == Rerank: "bge" or "lexical" depending on which
+  // backend RagPipeline::run() actually used. std::nullopt for every other mode.
+  std::optional<std::string> reranker_backend;
 };
 
 }  // namespace rag

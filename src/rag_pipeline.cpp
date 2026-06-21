@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <optional>
+#include <string>
 #include <utility>
 
 #include "advanced_query_transformer.hpp"
@@ -48,11 +50,14 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
   const auto retrieve_end = std::chrono::steady_clock::now();
 
   const auto rerank_start = std::chrono::steady_clock::now();
+  std::optional<std::string> reranker_backend;
   if (advanced == AdvancedMode::Rerank) {
     if (bge_reranker_) {
       contexts = bge_reranker_->rerank(query, contexts, top_k_);
+      reranker_backend = "bge";
     } else {
       contexts = rerankByLexicalOverlap(query, contexts, top_k_);
+      reranker_backend = "lexical";
     }
   }
   const auto rerank_end = std::chrono::steady_clock::now();
@@ -104,6 +109,7 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
   }
 
   result.contexts = contexts;
+  result.reranker_backend = reranker_backend;
   return result;
 }
 
