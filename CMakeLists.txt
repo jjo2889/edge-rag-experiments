@@ -74,6 +74,7 @@ find_library(LLAMA_LIBRARY
 
 set(RAG_CORE_SOURCES
   src/advanced_mode.cpp
+  src/technique_effect.cpp
   src/advanced_query_transformer.cpp
   src/hyde_transformer.cpp
   src/contextual_compressor.cpp
@@ -154,6 +155,7 @@ if(BUILD_RAG_TESTS)
   add_executable(rag_contract_tests
     tests/advanced_contract_test.cpp
     src/advanced_mode.cpp
+    src/technique_effect.cpp
     src/advanced_query_transformer.cpp
     src/hyde_transformer.cpp
     src/contextual_compressor.cpp

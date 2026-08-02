@@ -10,6 +10,7 @@
 #include "hyde_transformer.hpp"
 #include "reranker.hpp"
 #include "sentence_window.hpp"
+#include "technique_effect.hpp"
 
 namespace rag {
 
@@ -41,6 +42,7 @@ RagResult RagPipeline::run(const std::string& query,
   const auto query_transform_start = std::chrono::steady_clock::now();
   std::string retrieval_query = query;
   bool transform_used_fallback = false;
+  TechniqueEffect technique_effect = TechniqueEffect::NotApplicable;
   int aux_prompt_tokens = 0;
   int aux_output_tokens = 0;
   // Auxiliary generations pass an empty system prompt so they don't inherit the
@@ -52,6 +54,7 @@ RagResult RagPipeline::run(const std::string& query,
     const QueryTransformResult rewrite = sanitizeQueryRewrite(rewrite_trace.output_text, query);
     retrieval_query = rewrite.text;
     transform_used_fallback = rewrite.used_fallback;
+    technique_effect = classifyTextTransform(rewrite.used_fallback, query, rewrite.text);
     aux_prompt_tokens += rewrite_trace.prompt_tokens;
     aux_output_tokens += rewrite_trace.output_tokens;
   } else if (advanced == AdvancedMode::Hyde) {
@@ -60,6 +63,9 @@ RagResult RagPipeline::run(const std::string& query,
     const HydeTransformResult hyde = sanitizeHydeDocument(hyde_trace.output_text, query);
     retrieval_query = hyde.document;
     transform_used_fallback = hyde.used_fallback;
+    // A HyDE document that is just the claim restated retrieves exactly what
+    // advanced=none would, so it is a no-op however plausible it reads.
+    technique_effect = classifyTextTransform(hyde.used_fallback, query, hyde.document);
     aux_prompt_tokens += hyde_trace.prompt_tokens;
     aux_output_tokens += hyde_trace.output_tokens;
   }
@@ -73,6 +79,13 @@ RagResult RagPipeline::run(const std::string& query,
   const auto rerank_start = std::chrono::steady_clock::now();
   std::string reranker_backend_used;
   if (advanced == AdvancedMode::Rerank) {
+    // What advanced=none would have used: the first top_k of the retrieval
+    // order. If the reranker hands that same selection back, this query got the
+    // baseline while being counted as a rerank.
+    std::vector<RetrievedChunk> retrieval_order_top_k(
+        contexts.begin(),
+        contexts.begin() + std::min(contexts.size(), static_cast<size_t>(top_k_)));
+
     if (bge_reranker_) {
       contexts = bge_reranker_->rerank(query, contexts, top_k_);
       reranker_backend_used = "bge";
@@ -80,13 +93,18 @@ RagResult RagPipeline::run(const std::string& query,
       contexts = rerankByLexicalOverlap(query, contexts, top_k_);
       reranker_backend_used = "lexical";
     }
+    technique_effect = classifyContextTransform(false, retrieval_order_top_k, contexts);
   }
   const auto rerank_end = std::chrono::steady_clock::now();
 
   const auto context_transform_start = std::chrono::steady_clock::now();
   std::vector<RetrievedChunk> pre_transform_contexts;
   if (advanced == AdvancedMode::SentenceWindow) {
+    const std::vector<RetrievedChunk> before_expansion = contexts;
     contexts = expandSentenceWindows(query, contexts, sentence_index_, sentence_window_size_);
+    // window_size 0, a missing sentence store, or a chunk already covering its
+    // whole document all return the input untouched.
+    technique_effect = classifyContextTransform(false, before_expansion, contexts);
   } else if (advanced == AdvancedMode::ContextualCompression) {
     const GenerationTrace compression_trace =
         generator_->generateWithSystemPrompt(buildContextualCompressionPrompt(query, contexts), "");
@@ -94,6 +112,9 @@ RagResult RagPipeline::run(const std::string& query,
         buildCompressedContexts(compression_trace.output_text, contexts);
     aux_prompt_tokens += compression_trace.prompt_tokens;
     aux_output_tokens += compression_trace.output_tokens;
+    // Classified before `contexts` is overwritten below.
+    const TechniqueEffect compression_effect =
+        classifyCompression(compression.used_fallback, contexts, compression.contexts);
     // Compression replaces the retrieved passages with one synthetic chunk that
     // has no doc_id of its own. Keep the originals so retrieval quality for this
     // mode stays measurable.
@@ -102,6 +123,7 @@ RagResult RagPipeline::run(const std::string& query,
     }
     contexts = compression.contexts;
     transform_used_fallback = compression.used_fallback;
+    technique_effect = compression_effect;
   }
   const auto context_transform_end = std::chrono::steady_clock::now();
 
@@ -150,6 +172,7 @@ RagResult RagPipeline::run(const std::string& query,
   }
 
   result.transform_used_fallback = transform_used_fallback;
+  result.technique_effect = technique_effect;
   result.reranker_backend_used = reranker_backend_used;
   result.contexts = contexts;
   result.pre_transform_contexts = std::move(pre_transform_contexts);

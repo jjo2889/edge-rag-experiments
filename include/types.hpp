@@ -71,6 +71,10 @@ struct RagResult {
   // original query / uncompressed contexts. Lets analysis separate genuine
   // transforms from fallbacks that were averaged into a mode's results.
   bool transform_used_fallback = false;
+  // Whether this mode's transform changed anything — see TechniqueEffect. A
+  // mode whose effect is NoOp produced the same result as advanced=none, so
+  // averaging it into that mode's score reports the baseline as the technique.
+  TechniqueEffect technique_effect = TechniqueEffect::NotApplicable;
   // Which reranker actually ran for advanced=rerank: "" (not a rerank run),
   // "lexical", or "bge". Guards against a rerank run silently using the lexical
   // heuristic while the config claimed a cross-encoder.

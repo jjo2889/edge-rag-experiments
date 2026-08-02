@@ -13,6 +13,7 @@
 #include "query_request_io.hpp"
 #include "reranker.hpp"
 #include "sentence_window.hpp"
+#include "technique_effect.hpp"
 #include "text_chunker.hpp"
 
 namespace {
@@ -396,6 +397,82 @@ void testBasicTokenizerPreservesCaseWhenNotLowercasing() {
   require(tokens[0] == "Caf\xC3\xA9", "accents must be kept when do_lower_case is false");
 }
 
+
+rag::RetrievedChunk chunkWithText(const std::string& doc_id, const std::string& text) {
+  rag::RetrievedChunk c;
+  c.chunk.doc_id = doc_id;
+  c.chunk.text = text;
+  return c;
+}
+
+// The defect this instrumentation exists for: sanitizeQueryRewrite returns the
+// success path when the model echoes the query back, so a run reported 300
+// rewrites while 252 of them retrieved with the original string.
+void testEchoedRewriteIsNoOpNotSuccess() {
+  const std::string query = "ALDH1 expression is associated with poorer prognosis.";
+  const rag::QueryTransformResult echoed = rag::sanitizeQueryRewrite(query, query);
+  require(!echoed.used_fallback, "echoing the query is not the fallback path");
+  require(rag::classifyTextTransform(echoed.used_fallback, query, echoed.text) ==
+              rag::TechniqueEffect::NoOp,
+          "an unchanged rewrite must classify as noop, not applied");
+}
+
+void testChangedRewriteIsApplied() {
+  require(rag::classifyTextTransform(false, "who wrote Dune", "Dune novel author") ==
+              rag::TechniqueEffect::Applied,
+          "a changed query must classify as applied");
+}
+
+// A no-op and a fallback both retrieve with the original query, so they are
+// indistinguishable downstream unless the fallback flag wins here.
+void testFallbackOutranksNoOp() {
+  require(rag::classifyTextTransform(true, "same", "same") == rag::TechniqueEffect::Fallback,
+          "fallback must not be reported as noop");
+}
+
+// Transforms round-trip through the generator; a stray newline is not a change.
+void testWhitespaceOnlyDifferenceIsNoOp() {
+  require(rag::classifyTextTransform(false, "a b c", "  a   b  c\n") == rag::TechniqueEffect::NoOp,
+          "whitespace-only differences must not count as applied");
+}
+
+void testRerankKeepingRetrievalOrderIsNoOp() {
+  const std::vector<rag::RetrievedChunk> before = {chunkWithText("d1", "alpha"), chunkWithText("d2", "beta")};
+  require(rag::classifyContextTransform(false, before, before) == rag::TechniqueEffect::NoOp,
+          "a reranker returning the retrieval order unchanged is a noop");
+
+  const std::vector<rag::RetrievedChunk> reordered = {chunkWithText("d2", "beta"), chunkWithText("d1", "alpha")};
+  require(rag::classifyContextTransform(false, before, reordered) == rag::TechniqueEffect::Applied,
+          "a reordered selection is applied");
+}
+
+void testContextTransformDetectsSizeChange() {
+  const std::vector<rag::RetrievedChunk> before = {chunkWithText("d1", "alpha")};
+  const std::vector<rag::RetrievedChunk> expanded = {chunkWithText("d1", "alpha"), chunkWithText("d1", "gamma")};
+  require(rag::classifyContextTransform(false, before, expanded) == rag::TechniqueEffect::Applied,
+          "a sentence window that added a chunk is applied");
+}
+
+// Compression replaces N chunks with one, so a selection comparison would call
+// every run "applied". Only the concatenated text can tell an echo apart.
+void testCompressionEchoIsNoOp() {
+  const std::vector<rag::RetrievedChunk> before = {chunkWithText("d1", "alpha"), chunkWithText("d2", "beta")};
+  const std::vector<rag::RetrievedChunk> echoed = {chunkWithText("compressed", "alpha beta")};
+  require(rag::classifyCompression(false, before, echoed) == rag::TechniqueEffect::NoOp,
+          "a compressor echoing its input is a noop");
+
+  const std::vector<rag::RetrievedChunk> shortened = {chunkWithText("compressed", "alpha")};
+  require(rag::classifyCompression(false, before, shortened) == rag::TechniqueEffect::Applied,
+          "a compressor that dropped text is applied");
+}
+
+void testTechniqueEffectStrings() {
+  require(rag::techniqueEffectToString(rag::TechniqueEffect::NotApplicable) == "not_applicable", "n/a string");
+  require(rag::techniqueEffectToString(rag::TechniqueEffect::Applied) == "applied", "applied string");
+  require(rag::techniqueEffectToString(rag::TechniqueEffect::NoOp) == "noop", "noop string");
+  require(rag::techniqueEffectToString(rag::TechniqueEffect::Fallback) == "fallback", "fallback string");
+}
+
 }  // namespace
 
 int main() {
@@ -428,5 +505,13 @@ int main() {
   testHydeSanitizerStripsMarkersAndMarkdown();
   testHydeSanitizerKeepsPlainProse();
   testHydeSanitizerFallsBackOnMarkerOnlyOutput();
+  testEchoedRewriteIsNoOpNotSuccess();
+  testChangedRewriteIsApplied();
+  testFallbackOutranksNoOp();
+  testWhitespaceOnlyDifferenceIsNoOp();
+  testRerankKeepingRetrievalOrderIsNoOp();
+  testContextTransformDetectsSizeChange();
+  testCompressionEchoIsNoOp();
+  testTechniqueEffectStrings();
   return 0;
 }

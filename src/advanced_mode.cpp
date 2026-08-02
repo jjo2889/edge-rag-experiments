@@ -46,4 +46,19 @@ std::string advancedModeToString(const AdvancedMode mode) {
   throw std::runtime_error("Unknown advanced mode enum value.");
 }
 
+std::string techniqueEffectToString(const TechniqueEffect effect) {
+  switch (effect) {
+    case TechniqueEffect::NotApplicable:
+      return "not_applicable";
+    case TechniqueEffect::Applied:
+      return "applied";
+    case TechniqueEffect::NoOp:
+      return "noop";
+    case TechniqueEffect::Fallback:
+      return "fallback";
+  }
+
+  throw std::runtime_error("Unknown technique effect enum value.");
+}
+
 }  // namespace rag
