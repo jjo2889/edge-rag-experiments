@@ -8,9 +8,16 @@ n_ctx: 2048
 n_batch: 512
 n_threads: 4
 
-# 일부 instruction/chat GGUF에서는 내장 chat template 사용 시 즉시 EOG로 빈 응답이 나올 수 있다.
-# 필요할 때만 실험적으로 켠다.
-use_model_chat_template: false
+# gemma-3-270m-it은 instruction tuned 모델이라 raw completion으로 넣으면 지시를
+# 따르지 않고 프롬프트를 이어쓴다. 끄고 측정했을 때 SciFact 30문항 중
+# 시스템 프롬프트 문구를 그대로 답변으로 뱉은 것이 6건(20%), 클레임을 그대로
+# 복사한 것이 6건(20%), 128토큰 상한 폭주가 3건이었다.
+#
+# 켜면 llama.cpp가 <start_of_turn>user ... <start_of_turn>model 로 감싸주고,
+# Gemma template이 system role을 첫 user 턴에 병합해준다. 12문항 재측정에서
+# 프롬프트 누수와 클레임 복사 모두 0건, 폭주 0건. 이전 주석이 경고하던
+# "즉시 EOG로 빈 응답" 회귀는 재현되지 않았다 (2026-08-02).
+use_model_chat_template: true
 
 # Generation length policy:
 # - Supported key: max_new_tokens

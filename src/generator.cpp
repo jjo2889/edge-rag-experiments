@@ -1,6 +1,7 @@
 #include "generator.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <memory>
 #include <sstream>
@@ -37,6 +38,17 @@ std::string loadTextFile(const std::string& path) {
     throw std::runtime_error("System prompt file is empty: " + path);
   }
   return text;
+}
+
+// PromptBuilder marks sections with brackets ("[Evidence]") and individual items
+// with a bare label followed by a space ("Evidence 1:"). Both are structure the
+// model must never emit, so both are safe to cut at the very start of a reply.
+bool isStructuralMarker(const std::string& stop) {
+  if (stop.size() < 2 || stop.front() != '\n') {
+    return false;
+  }
+  const char first = stop[1];
+  return first == '[' || (stop.back() == ' ' && std::isupper(static_cast<unsigned char>(first)));
 }
 
 }  // namespace
@@ -153,6 +165,19 @@ bool Generator::trimAtStopString(std::string& output_text) const {
     const size_t pos = output_text.find(stop);
     if (pos != std::string::npos && (first_match == std::string::npos || pos < first_match)) {
       first_match = pos;
+    }
+
+    // Every configured stop string requires a leading newline so that the same
+    // word mid-sentence does not trigger a cut. That guard also blinds them to
+    // output that opens with the marker: an answer starting with "Evidence 4:"
+    // matched nothing and ran to max_new_tokens. Treat position 0 as a match,
+    // but only for the structural markers — a reply that legitimately opens
+    // with "I don't know" must survive.
+    if (isStructuralMarker(stop)) {
+      const std::string at_start = stop.substr(1);
+      if (output_text.compare(0, at_start.size(), at_start) == 0) {
+        first_match = 0;
+      }
     }
   }
 
