@@ -93,6 +93,57 @@ This is a capability wall at 270M parameters, not a prompt bug. Resolving it is
 a research decision — a larger generator, or a paper framing whose generation
 claims do not depend on the model reasoning over retrieved evidence.
 
+## Candidate generators measured on the Pi (2026-08-03)
+
+The parameter count on the box is misleading. What matters is how much of it is
+transformer rather than lookup table:
+
+| | gemma-3-270m-it | SmolLM2-360M | Qwen3-0.6B | Qwen3-1.7B |
+|---|---|---|---|---|
+| GGUF params | 268.10M | 361.82M | 751.63M | 1.72B |
+| vocab | 262,144 | 49,152 | 151,936 | 151,936 |
+| n_embd / n_layer | 640 / 18 | 960 / 32 | 1024 / 28 | 2048 / 28 |
+| embedding share | **62.6%** | 13.0% | 41.4% | — |
+| **transformer body** | **100.3M** | **314.6M** | **440.4M** | — |
+| quantization tested | Q8_0 | F16 | F16 | Q4_K_M |
+| llama-bench pp512 | 616 t/s | 128 t/s | 91.9 t/s | 52.4 t/s |
+| llama-bench tg128 | 38.5 t/s | 16.0 t/s | 9.09 t/s | 10.1 t/s |
+| serving model_load p50 | 1,480 ms | 650 ms | 952 ms | 3,123 ms |
+| serving generation p50 | 3,777 ms | 6,926 ms | 10,915 ms | 18,188 ms |
+
+Two thirds of gemma-3-270m is its 262k-entry embedding table; only ~100M
+parameters do any computation. SmolLM2-360M carries a 49k vocab and so fields a
+3.1x larger transformer at a nominally similar size.
+
+Controls, all on the same Yes/No prompt so the models are comparable (the
+label-based prompt is not usable for SmolLM2 — it emits no label at all,
+answering "Yes" regardless of instructions):
+
+| control | gemma-3-270m | SmolLM2-360M | Qwen3-0.6B |
+|---|---|---|---|
+| label order flipped (12 claims) | **12/12 flip** | 12Y→10Y (stable) | 11Y→9N (**flips**) |
+| negation pairs distinguished | **0/3** | 2/3 | 2/3 |
+| prediction distribution (20) | all SUPPORTS | all Yes | 19 Yes / 1 No |
+
+gemma-3-270m is the only one that fails every control outright. Both sub-1B
+candidates distinguish 2 of 3 negation pairs — real evidence sensitivity that
+gemma has none of — but both still answer Yes to essentially everything, and
+Qwen3-0.6B is the *more* option-order dependent of the two. Neither is usable
+as-is.
+
+Qwen3-1.7B (Q4_K_M) does not rescue it either: 0/3 on negation pairs. Its 11/20
+accuracy comes from predicting NOT_ENOUGH_INFO at roughly the rate the gold
+sample contains it, not from reading evidence.
+
+Latency is not the blocker. At Qwen3-0.6B's 10.9 s median generation, all twelve
+mode/dataset runs come to roughly 12-14 hours of Pi inference, comparable to the
+original plan. Capability is the blocker.
+
+Caveat on accuracy figures: only 188 of the 300 SciFact test queries (63%) carry
+a label in `queries.jsonl` metadata. The rest were scored as NOT_ENOUGH_INFO,
+which is probably wrong. The order-flip and negation controls need no gold
+labels and are the trustworthy evidence here.
+
 ## Housekeeping
 
 `reports/full-run/` in the evaluator repo was moved to
