@@ -167,10 +167,22 @@ Latency is not the blocker. At Qwen3-0.6B's 10.9 s median generation, all twelve
 mode/dataset runs come to roughly 12-14 hours of Pi inference, comparable to the
 original plan. Capability is the blocker.
 
-Caveat on accuracy figures: only 188 of the 300 SciFact test queries (63%) carry
-a label in `queries.jsonl` metadata. The rest were scored as NOT_ENOUGH_INFO,
-which is probably wrong. The order-flip and negation controls need no gold
-labels and are the trustworthy evidence here.
+Caveat on accuracy figures: only 188 of the 300 SciFact test queries carry a
+label in `queries.jsonl` metadata; the other 112 were scored as NOT_ENOUGH_INFO.
+An earlier revision called that mapping "probably wrong". It is probably right —
+SciFact's NOINFO claims are exactly the ones with an empty evidence field, a
+structural property of the dataset noted in the literature (arXiv 2606.12854).
+All 112 still carry a cited document in `qrels/test.tsv`, so they are NOINFO in
+the label sense, not absent from retrieval. Confirming this against the original
+Wadden release rather than the BEIR conversion is still worth doing.
+
+The real caveat is different: because that shortcut exists, a fine-tuned model
+can score high NEI F1 by detecting empty evidence rather than by reasoning. In
+our RAG setup the shortcut is unavailable — top-k retrieval always supplies
+evidence — so NOINFO is genuinely harder here than the published numbers imply.
+
+Either way, the order-flip and negation controls need no gold labels and remain
+the trustworthy evidence.
 
 ## Housekeeping
 
