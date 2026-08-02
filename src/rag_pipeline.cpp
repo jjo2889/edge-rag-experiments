@@ -36,8 +36,15 @@ RagPipeline::RagPipeline(const Retriever& retriever,
 
 RagResult RagPipeline::run(const std::string& query,
                            const AdvancedMode advanced,
-                           const TokenCallback& on_token) const {
+                           const TokenCallback& on_token,
+                           const ContextOverride& context_override) const {
   const auto total_start = std::chrono::steady_clock::now();
+
+  // closed_book and oracle both bypass retrieval, so query_rewrite, hyde and
+  // rerank have nothing to act on. They are reported not_applicable rather than
+  // silently burning an auxiliary generation on a query that never reaches an
+  // index.
+  const bool retrieval_active = context_override.source == ContextSource::Retrieved;
 
   const auto query_transform_start = std::chrono::steady_clock::now();
   std::string retrieval_query = query;
@@ -48,7 +55,7 @@ RagResult RagPipeline::run(const std::string& query,
   // Auxiliary generations pass an empty system prompt so they don't inherit the
   // final-answer QA system prompt (which would turn a rewrite into "Label: ..." /
   // "I don't know"). The final answer below still uses the configured QA prompt.
-  if (advanced == AdvancedMode::QueryRewrite) {
+  if (retrieval_active && advanced == AdvancedMode::QueryRewrite) {
     const GenerationTrace rewrite_trace =
         generator_->generateWithSystemPrompt(buildQueryRewritePrompt(query), "");
     const QueryTransformResult rewrite = sanitizeQueryRewrite(rewrite_trace.output_text, query);
@@ -57,7 +64,7 @@ RagResult RagPipeline::run(const std::string& query,
     technique_effect = classifyTextTransform(rewrite.used_fallback, query, rewrite.text);
     aux_prompt_tokens += rewrite_trace.prompt_tokens;
     aux_output_tokens += rewrite_trace.output_tokens;
-  } else if (advanced == AdvancedMode::Hyde) {
+  } else if (retrieval_active && advanced == AdvancedMode::Hyde) {
     const GenerationTrace hyde_trace =
         generator_->generateWithSystemPrompt(buildHydePrompt(query), "");
     const HydeTransformResult hyde = sanitizeHydeDocument(hyde_trace.output_text, query);
@@ -72,13 +79,26 @@ RagResult RagPipeline::run(const std::string& query,
   const auto query_transform_end = std::chrono::steady_clock::now();
 
   const auto retrieve_start = std::chrono::steady_clock::now();
-  const int retrieve_k = advanced == AdvancedMode::Rerank ? rerank_candidate_k_ : top_k_;
-  std::vector<RetrievedChunk> contexts = retriever_->retrieve(retrieval_query, retrieve_k);
+  std::vector<RetrievedChunk> contexts;
+  if (retrieval_active) {
+    const int retrieve_k = advanced == AdvancedMode::Rerank ? rerank_candidate_k_ : top_k_;
+    contexts = retriever_->retrieve(retrieval_query, retrieve_k);
+  } else if (context_override.source == ContextSource::Oracle) {
+    contexts.reserve(context_override.oracle_contexts.size());
+    for (const auto& oracle : context_override.oracle_contexts) {
+      RetrievedChunk chunk;
+      chunk.chunk.doc_id = oracle.doc_id.empty() ? "oracle" : oracle.doc_id;
+      chunk.chunk.text = oracle.text;
+      // No index produced these, so a similarity score would be fabricated.
+      chunk.has_retrieval_score = false;
+      contexts.push_back(std::move(chunk));
+    }
+  }
   const auto retrieve_end = std::chrono::steady_clock::now();
 
   const auto rerank_start = std::chrono::steady_clock::now();
   std::string reranker_backend_used;
-  if (advanced == AdvancedMode::Rerank) {
+  if (retrieval_active && advanced == AdvancedMode::Rerank) {
     // What advanced=none would have used: the first top_k of the retrieval
     // order. If the reranker hands that same selection back, this query got the
     // baseline while being counted as a rerank.
@@ -139,6 +159,7 @@ RagResult RagPipeline::run(const std::string& query,
 
   RagResult result;
   result.advanced_mode = advanced;
+  result.context_source = context_override.source;
   result.original_query = query;
   result.retrieval_query = retrieval_query;
   result.prompt_body = generation_trace.prompt_body;

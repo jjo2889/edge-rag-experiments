@@ -13,6 +13,7 @@
 #include "query_request_io.hpp"
 #include "reranker.hpp"
 #include "sentence_window.hpp"
+#include "context_source.hpp"
 #include "technique_effect.hpp"
 #include "text_chunker.hpp"
 
@@ -473,6 +474,78 @@ void testTechniqueEffectStrings() {
   require(rag::techniqueEffectToString(rag::TechniqueEffect::Fallback) == "fallback", "fallback string");
 }
 
+
+rag::query::QueryRequest parseRequest(const char* name, const std::string& body) {
+  const auto path = writeTempJson(name, body);
+  const rag::query::QueryRequest request = rag::query::loadRequestFromJson(path.string());
+  std::filesystem::remove(path);
+  return request;
+}
+
+bool requestRejects(const char* name, const std::string& body) {
+  const auto path = writeTempJson(name, body);
+  bool threw = false;
+  try {
+    const rag::query::QueryRequest request = rag::query::loadRequestFromJson(path.string());
+    rag::query::validateRequest(request);
+  } catch (const std::runtime_error&) {
+    threw = true;
+  }
+  std::filesystem::remove(path);
+  return threw;
+}
+
+void testContextSourceDefaultsToRetrieved() {
+  const auto request = parseRequest("rag_ctx_default.json", R"({"question":"q"})");
+  require(request.context_source == rag::ContextSource::Retrieved,
+          "a request without context_source must run the normal pipeline");
+  require(request.oracle_contexts.empty(), "no oracle contexts by default");
+}
+
+void testClosedBookParses() {
+  const auto request =
+      parseRequest("rag_ctx_closed.json", R"({"question":"q","context_source":"closed_book"})");
+  require(request.context_source == rag::ContextSource::ClosedBook, "closed_book parse failed");
+}
+
+void testOracleAcceptsStringsAndObjects() {
+  const auto request = parseRequest(
+      "rag_ctx_oracle.json",
+      R"({"question":"q","context_source":"oracle","oracle_contexts":["plain",{"doc_id":"d7","text":"rich"}]})");
+  require(request.oracle_contexts.size() == 2, "both entry shapes must parse");
+  require(request.oracle_contexts[0].doc_id.empty(), "a bare string carries no provenance");
+  require(request.oracle_contexts[0].text == "plain", "string entry text");
+  require(request.oracle_contexts[1].doc_id == "d7", "object entry keeps doc_id");
+  require(request.oracle_contexts[1].text == "rich", "object entry text");
+}
+
+// Retrieving because the caller forgot the gold passages would turn the ceiling
+// condition back into an ordinary run, and no downstream column would show it.
+void testOracleWithoutContextsIsRejected() {
+  require(requestRejects("rag_ctx_oracle_empty.json", R"({"question":"q","context_source":"oracle"})"),
+          "oracle without oracle_contexts must be rejected, not silently retrieved");
+}
+
+void testOracleContextsWithoutOracleSourceIsRejected() {
+  require(requestRejects("rag_ctx_stray_oracle.json", R"({"question":"q","oracle_contexts":["x"]})"),
+          "gold passages sent to a retrieved run must be rejected as contradictory");
+}
+
+void testContextSourceStrings() {
+  require(rag::contextSourceToString(rag::ContextSource::Retrieved) == "retrieved", "retrieved string");
+  require(rag::contextSourceToString(rag::ContextSource::ClosedBook) == "closed_book", "closed_book string");
+  require(rag::contextSourceToString(rag::ContextSource::Oracle) == "oracle", "oracle string");
+  require(rag::contextSourceFromString("") == rag::ContextSource::Retrieved, "empty defaults to retrieved");
+
+  bool threw = false;
+  try {
+    (void)rag::contextSourceFromString("gold");
+  } catch (const std::runtime_error&) {
+    threw = true;
+  }
+  require(threw, "unknown context source must throw");
+}
+
 }  // namespace
 
 int main() {
@@ -513,5 +586,11 @@ int main() {
   testContextTransformDetectsSizeChange();
   testCompressionEchoIsNoOp();
   testTechniqueEffectStrings();
+  testContextSourceDefaultsToRetrieved();
+  testClosedBookParses();
+  testOracleAcceptsStringsAndObjects();
+  testOracleWithoutContextsIsRejected();
+  testOracleContextsWithoutOracleSourceIsRejected();
+  testContextSourceStrings();
   return 0;
 }

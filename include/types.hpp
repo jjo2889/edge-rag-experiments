@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "advanced_mode.hpp"
+#include "context_source.hpp"
 
 namespace rag {
 
@@ -43,6 +44,10 @@ struct RetrievedChunk {
 
 struct RagResult {
   AdvancedMode advanced_mode = AdvancedMode::None;
+  // Which baseline this row belongs to. Mixing closed_book or oracle rows into
+  // a retrieved run's mean would compare a technique against a different
+  // experiment.
+  ContextSource context_source = ContextSource::Retrieved;
   std::string original_query;
   std::string retrieval_query;
   std::string prompt_body;

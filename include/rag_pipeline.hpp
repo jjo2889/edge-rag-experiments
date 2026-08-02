@@ -7,6 +7,7 @@
 #include "advanced_mode.hpp"
 #include "generator.hpp"
 #include "prompt_builder.hpp"
+#include "context_source.hpp"
 #include "retriever.hpp"
 #include "sentence_window.hpp"
 #include "types.hpp"
@@ -14,6 +15,11 @@
 namespace rag {
 
 class BgeReranker;
+
+struct ContextOverride {
+  ContextSource source = ContextSource::Retrieved;
+  std::vector<OracleContext> oracle_contexts;
+};
 
 class RagPipeline {
  public:
@@ -31,9 +37,13 @@ class RagPipeline {
   // streamed through this callback.
   using TokenCallback = std::function<void(const std::string&)>;
 
+  // `context` selects the floor (closed_book) / ceiling (oracle) baselines
+  // described in docs/measurement_plan.md. Both skip retrieval, and with it the
+  // transforms that exist only to change what retrieval returns.
   RagResult run(const std::string& query,
                 AdvancedMode advanced = AdvancedMode::None,
-                const TokenCallback& on_token = nullptr) const;
+                const TokenCallback& on_token = nullptr,
+                const ContextOverride& context = {}) const;
 
  private:
   const Retriever* retriever_;

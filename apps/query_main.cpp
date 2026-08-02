@@ -385,7 +385,11 @@ int main(int argc, char** argv) {
     }
 
     const rag::RagResult result =
-        pipeline.run(request_for_error->question, request_for_error->advanced, on_token);
+        pipeline.run(request_for_error->question,
+                     request_for_error->advanced,
+                     on_token,
+                     rag::ContextOverride{request_for_error->context_source,
+                                          request_for_error->oracle_contexts});
     const double memory_mb = rag::query::getResidentMemoryMb();
 
     const nlohmann::json output = rag::query::buildSingleRunSuccessJson(*request_for_error,
