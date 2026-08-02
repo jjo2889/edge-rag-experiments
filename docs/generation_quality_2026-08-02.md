@@ -125,11 +125,39 @@ answering "Yes" regardless of instructions):
 | negation pairs distinguished | **0/3** | 2/3 | 2/3 |
 | prediction distribution (20) | all SUPPORTS | all Yes | 19 Yes / 1 No |
 
-gemma-3-270m is the only one that fails every control outright. Both sub-1B
-candidates distinguish 2 of 3 negation pairs — real evidence sensitivity that
-gemma has none of — but both still answer Yes to essentially everything, and
-Qwen3-0.6B is the *more* option-order dependent of the two. Neither is usable
-as-is.
+gemma-3-270m is the only one that fails every control outright. Qwen3-0.6B is
+the *more* option-order dependent of the two sub-1B candidates. Neither is
+usable as-is.
+
+**Correction to the negation-pair control.** An earlier revision of this file
+read the 2/3 result as evidence sensitivity. It is not, for two reasons.
+
+First, the control is confounded: the retrieval query *is* the claim, so a
+negated claim retrieves different chunks. A changed answer can come from
+changed evidence rather than from any reasoning about the negation.
+
+Second, SciFact contains its own negation pairs, and Qwen3-0.6B fails them.
+Asked on the twelve gold-labelled claims below — six REFUTES, six SUPPORTS —
+it answered SUPPORTS (or "Yes" under the Yes/No prompt) to **all twelve**:
+
+    ALDH1 expression is associated with poorer prognosis in breast cancer.  [SUPPORTS] -> Yes
+    ALDH1 expression is associated with better breast cancer outcomes.      [REFUTES]  -> Yes
+    APOE4 ... tau phosphorylation causing GABA neuron degeneration.         [SUPPORTS] -> Yes
+    APOE4 ... tau phosphorylation, delaying GABA neuron degeneration.       [REFUTES]  -> Yes
+
+Adding an explicit negation marker does not help either — "ALDH1 expression is
+**not** associated with poorer prognosis in breast cancer" also returns Yes.
+Qwen3-0.6B answers affirmatively to essentially every claim; the single "No" in
+the 20-claim sample is noise.
+
+**Thinking tags leak into the answer.** `/no_think` empties the reasoning block
+but does not remove the markers: every reply is literally
+`<think>\n\n</think>\n\nSUPPORTS` — 7 output tokens, 5 of them markup. Any
+Qwen3 generator needs these stripped before the answer reaches RAGAS.
+
+**Latency is prompt-bound, not generation-bound.** Those 6-7 token replies took
+5-17 s. At 91.9 t/s prompt processing, a ~1,000-token retrieved context alone
+costs ~11 s, so latency tracks context size rather than answer length.
 
 Qwen3-1.7B (Q4_K_M) does not rescue it either: 0/3 on negation pairs. Its 11/20
 accuracy comes from predicting NOT_ENOUGH_INFO at roughly the rate the gold
