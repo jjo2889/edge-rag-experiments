@@ -6,6 +6,8 @@
 #include <string>
 #include <utility>
 
+#include "utf8_util.hpp"
+
 namespace rag {
 
 namespace {
@@ -53,20 +55,29 @@ ContextCompressionResult buildCompressedContexts(const std::string& generated_te
     return ContextCompressionResult{fallback_contexts, true};
   }
   if (compressed.size() > kMaxCompressedChars) {
-    compressed.resize(kMaxCompressedChars);
+    truncateUtf8(compressed, kMaxCompressedChars);
     compressed = trim(compressed);
   }
   if (compressed.empty()) {
     return ContextCompressionResult{fallback_contexts, true};
   }
 
+  // The merged chunk is a new synthetic passage, not any retrieved document.
+  // It used to inherit the top context's score and sentence range wholesale,
+  // which made the inherited numbers look like real retrieval metadata for a
+  // chunk that no longer corresponds to a document. Clear all of it; callers
+  // that need retrieval provenance for this mode read pre_transform_contexts.
   RetrievedChunk merged;
-  if (!fallback_contexts.empty()) {
-    merged = fallback_contexts.front();
-  }
   merged.chunk.chunk_id = -1;
+  merged.chunk.doc_chunk_index = -1;
+  merged.chunk.sentence_begin = -1;
+  merged.chunk.sentence_end = -1;
   merged.chunk.doc_id = "compressed";
   merged.chunk.text = std::move(compressed);
+  merged.score = 0.0F;
+  merged.has_retrieval_score = false;
+  merged.rerank_score = 0.0F;
+  merged.has_rerank_score = false;
 
   return ContextCompressionResult{{std::move(merged)}, false};
 }

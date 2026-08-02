@@ -3,8 +3,10 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_set>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -75,6 +77,13 @@ std::vector<Document> DocumentLoader::loadJsonlFile(const std::string& path, con
   std::vector<Document> docs;
   std::string line;
   size_t line_no = 0;
+  // Skipping malformed/empty lines silently meant an index could be built from a
+  // fraction of the corpus and look complete. Count every reason a line was
+  // dropped and report it, so an ingest against a broken file is visible.
+  size_t malformed_json = 0;
+  size_t missing_text = 0;
+  std::unordered_set<std::string> seen_ids;
+
   while (std::getline(in, line)) {
     ++line_no;
     if (line.empty()) {
@@ -85,6 +94,7 @@ std::vector<Document> DocumentLoader::loadJsonlFile(const std::string& path, con
     try {
       j = nlohmann::json::parse(line);
     } catch (const std::exception&) {
+      ++malformed_json;
       continue;
     }
 
@@ -98,6 +108,7 @@ std::vector<Document> DocumentLoader::loadJsonlFile(const std::string& path, con
     }
 
     if (text.empty()) {
+      ++missing_text;
       continue;
     }
 
@@ -111,6 +122,14 @@ std::vector<Document> DocumentLoader::loadJsonlFile(const std::string& path, con
       doc.id = rel.string() + "#" + std::to_string(line_no);
     }
 
+    // Duplicate ids would make retrieval ambiguous and break qrels matching, so
+    // reject rather than silently keeping whichever copy landed last.
+    if (!seen_ids.insert(doc.id).second) {
+      throw std::runtime_error("Duplicate document id '" + doc.id + "' at " + path + ":" +
+                               std::to_string(line_no) +
+                               ". Document ids must be unique within a corpus file.");
+    }
+
     if (j.contains("title") && j["title"].is_string()) {
       doc.title = j["title"].get<std::string>();
     } else {
@@ -120,6 +139,13 @@ std::vector<Document> DocumentLoader::loadJsonlFile(const std::string& path, con
     doc.text = std::move(text);
     docs.push_back(std::move(doc));
   }
+
+  const size_t skipped = malformed_json + missing_text;
+  std::cerr << "[loader] " << path << ": loaded=" << docs.size() << " skipped=" << skipped;
+  if (skipped > 0) {
+    std::cerr << " (malformed_json=" << malformed_json << " missing_text=" << missing_text << ")";
+  }
+  std::cerr << '\n';
 
   return docs;
 }

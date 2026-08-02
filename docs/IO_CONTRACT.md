@@ -58,12 +58,17 @@
 | `latency_ms.prompt_build` | integer | retrieved context를 prompt body로 구성한 시간(ms) |
 | `latency_ms.generation` | integer | LLM 생성 시간(ms) |
 | `output_tokens_per_sec` | number | `output_tokens / generation elapsed seconds` |
-| `memory_mb` | number \| null | `rag_query` 프로세스의 resident set size(RSS) MB. 측정 불가 시 `null` |
+| `memory_mb` | number \| null | RAG 처리 완료 직후 `rag_query` 프로세스의 resident set size(RSS) MB. 측정 불가 시 `null` |
 | `prompt_tokens_before_truncation` | integer | context window 제한 적용 전 prompt token 수 |
 | `prompt_tokens` | integer | 실제 모델 입력에 사용된 prompt token 수 |
 | `output_tokens` | integer | 생성된 token 수 |
 | `prompt_truncated` | boolean | context window 제한으로 prompt가 잘렸는지 여부 |
 | `retrieval_query` | string | 검색에 실제 사용한 query |
+
+`memory_mb`는 `pipeline.run()`이 반환된 직후 `/proc/self/status`의 `VmRSS`를 읽은 값이다.
+따라서 요청 처리 중 최대 RSS(peak RSS), `rag_http_server` 프로세스의 RSS, 장치 전체 메모리 사용량을 의미하지 않는다.
+보고서와 결과표에서는 `end-of-request RSS (MB)`로 표기한다. Peak memory가 필요하면 `VmHWM` 또는
+`getrusage(RUSAGE_SELF).ru_maxrss`를 별도 지표로 구현해야 한다.
 
 ## 단일 실행
 

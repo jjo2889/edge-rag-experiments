@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <mutex>
 #include <string>
 
@@ -29,12 +30,29 @@ class Generator {
   Generator(const Generator&) = delete;
   Generator& operator=(const Generator&) = delete;
 
+  // Called with each freshly generated token piece (raw, before stop-string
+  // trimming). Empty by default; used to stream generation incrementally.
+  using TokenCallback = std::function<void(const std::string&)>;
+
   std::string generate(const std::string& prompt_body) const;
+  // These two use the model's configured QA system prompt (final-answer path).
   GenerationTrace generateWithTrace(const std::string& prompt_body) const;
+  GenerationTrace generateWithTrace(const std::string& prompt_body,
+                                    const TokenCallback& on_token) const;
+  // Auxiliary generations (query rewrite, HyDE, contextual compression) must NOT
+  // inherit the final-answer QA system prompt, or they emit e.g. "Label: ..." /
+  // "I don't know" instead of a rewrite. Pass an explicit override ("" = none).
+  GenerationTrace generateWithSystemPrompt(const std::string& prompt_body,
+                                           const std::string& system_prompt_override) const;
 
  private:
-  std::string buildFinalPrompt(const std::string& prompt_body) const;
-  std::string buildChatPrompt(const std::string& prompt_body) const;
+  GenerationTrace generateImpl(const std::string& prompt_body,
+                               const std::string& system_prompt,
+                               const TokenCallback& on_token) const;
+  std::string buildFinalPrompt(const std::string& prompt_body,
+                               const std::string& system_prompt) const;
+  std::string buildChatPrompt(const std::string& prompt_body,
+                              const std::string& system_prompt) const;
   bool trimAtStopString(std::string& output_text) const;
   int computeRequiredBatchSize(int prompt_token_count) const;
   void recreateContextLocked(int requested_n_batch) const;

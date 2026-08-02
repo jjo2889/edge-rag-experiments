@@ -95,16 +95,17 @@ Generator::~Generator() {
   }
 }
 
-std::string Generator::buildFinalPrompt(const std::string& prompt_body) const {
+std::string Generator::buildFinalPrompt(const std::string& prompt_body,
+                                        const std::string& system_prompt) const {
   if (!chat_template_.empty()) {
-    return buildChatPrompt(prompt_body);
+    return buildChatPrompt(prompt_body, system_prompt);
   }
 
-  if (system_prompt_.empty()) {
+  if (system_prompt.empty()) {
     return prompt_body;
   }
 
-  std::string final_prompt = system_prompt_;
+  std::string final_prompt = system_prompt;
   if (!final_prompt.empty() && final_prompt.back() != '\n') {
     final_prompt.push_back('\n');
   }
@@ -113,28 +114,29 @@ std::string Generator::buildFinalPrompt(const std::string& prompt_body) const {
   return final_prompt;
 }
 
-std::string Generator::buildChatPrompt(const std::string& prompt_body) const {
+std::string Generator::buildChatPrompt(const std::string& prompt_body,
+                                       const std::string& system_prompt) const {
   std::vector<llama_chat_message> chat;
-  chat.reserve(system_prompt_.empty() ? 1 : 2);
+  chat.reserve(system_prompt.empty() ? 1 : 2);
 
-  if (!system_prompt_.empty()) {
-    chat.push_back({"system", system_prompt_.c_str()});
+  if (!system_prompt.empty()) {
+    chat.push_back({"system", system_prompt.c_str()});
   }
   chat.push_back({"user", prompt_body.c_str()});
 
-  const size_t approx_chars = system_prompt_.size() + prompt_body.size();
+  const size_t approx_chars = system_prompt.size() + prompt_body.size();
   std::vector<char> buf(std::max<size_t>(512, approx_chars * 4 + 256), '\0');
   int32_t needed =
       llama_chat_apply_template(chat_template_.c_str(), chat.data(), chat.size(), true, buf.data(), buf.size());
   if (needed < 0) {
-    return system_prompt_.empty() ? prompt_body : (system_prompt_ + "\n\n" + prompt_body);
+    return system_prompt.empty() ? prompt_body : (system_prompt + "\n\n" + prompt_body);
   }
 
   if (needed >= static_cast<int32_t>(buf.size())) {
     buf.assign(static_cast<size_t>(needed) + 1, '\0');
     needed = llama_chat_apply_template(chat_template_.c_str(), chat.data(), chat.size(), true, buf.data(), buf.size());
     if (needed < 0) {
-      return system_prompt_.empty() ? prompt_body : (system_prompt_ + "\n\n" + prompt_body);
+      return system_prompt.empty() ? prompt_body : (system_prompt + "\n\n" + prompt_body);
     }
   }
 
@@ -193,13 +195,29 @@ void Generator::recreateContextLocked(const int requested_n_batch) const {
 }
 
 GenerationTrace Generator::generateWithTrace(const std::string& prompt_body) const {
+  return generateImpl(prompt_body, system_prompt_, nullptr);
+}
+
+GenerationTrace Generator::generateWithTrace(const std::string& prompt_body,
+                                             const TokenCallback& on_token) const {
+  return generateImpl(prompt_body, system_prompt_, on_token);
+}
+
+GenerationTrace Generator::generateWithSystemPrompt(const std::string& prompt_body,
+                                                    const std::string& system_prompt_override) const {
+  return generateImpl(prompt_body, system_prompt_override, nullptr);
+}
+
+GenerationTrace Generator::generateImpl(const std::string& prompt_body,
+                                        const std::string& system_prompt,
+                                        const TokenCallback& on_token) const {
   if (model_ == nullptr || vocab_ == nullptr) {
     throw std::runtime_error("Generator model is not initialized.");
   }
 
   GenerationTrace trace;
   trace.prompt_body = prompt_body;
-  trace.final_prompt = buildFinalPrompt(prompt_body);
+  trace.final_prompt = buildFinalPrompt(prompt_body, system_prompt);
 
   const int n_prompt =
       -llama_tokenize(vocab_, trace.final_prompt.c_str(), static_cast<int32_t>(trace.final_prompt.size()), nullptr, 0, true, true);
@@ -223,7 +241,27 @@ GenerationTrace Generator::generateWithTrace(const std::string& prompt_body) con
   const int max_prompt_tokens = std::max(16, context_limit_ - generation_limit);
   if (static_cast<int>(prompt_tokens.size()) > max_prompt_tokens) {
     trace.prompt_truncated = true;
-    prompt_tokens.erase(prompt_tokens.begin(), prompt_tokens.end() - max_prompt_tokens);
+    // Drop from the MIDDLE (the overflowing retrieved context), preserving the
+    // head (BOS + system prompt / template preamble) and the tail (the query and
+    // output marker, which carry the actual question). Dropping the head instead
+    // — as this did before — deletes BOS and the system instructions, so a
+    // truncated run measures a structurally broken prompt rather than the RAG
+    // condition under test.
+    int head_keep = 0;
+    if (!system_prompt.empty()) {
+      const int system_tokens =
+          -llama_tokenize(vocab_, system_prompt.c_str(),
+                          static_cast<int32_t>(system_prompt.size()), nullptr, 0, true, true);
+      if (system_tokens > 0) {
+        head_keep = system_tokens;
+      }
+    }
+    // Never let the head consume the whole budget; always leave room for the tail.
+    head_keep = std::max(0, std::min(head_keep, max_prompt_tokens / 2));
+    const int total = static_cast<int>(prompt_tokens.size());
+    const int tail_keep = max_prompt_tokens - head_keep;
+    prompt_tokens.erase(prompt_tokens.begin() + head_keep,
+                        prompt_tokens.begin() + (total - tail_keep));
   }
   trace.prompt_tokens = static_cast<int>(prompt_tokens.size());
   const int required_n_batch = computeRequiredBatchSize(static_cast<int>(prompt_tokens.size()));
@@ -292,11 +330,17 @@ GenerationTrace Generator::generateWithTrace(const std::string& prompt_body) con
     }
     trace.output_text.append(piece, piece + n);
     ++output_tokens;
+    if (on_token && n > 0) {
+      on_token(std::string(piece, piece + n));
+    }
     if (trimAtStopString(trace.output_text)) {
       break;
     }
 
-    llama_sampler_accept(sampler.get(), token);
+    // NOTE: do not call llama_sampler_accept here. llama_sampler_sample()
+    // already accepts the sampled token internally; a second accept double-counts
+    // every token in the repetition-penalty ring buffer, halving the effective
+    // penalty window.
     batch = llama_batch_get_one(&token, 1);
   }
   trace.output_tokens = output_tokens;

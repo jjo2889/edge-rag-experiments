@@ -113,8 +113,21 @@ RetrievalConfig ConfigLoader::loadRetrievalConfig(const std::string& path) {
 
   cfg.chunk_size = readRequired<int>(root, "chunk_size");
   cfg.chunk_overlap = readRequired<int>(root, "chunk_overlap");
+  // Reject instead of silently clamping overlap to chunk_size-1: a run configured
+  // with overlap >= chunk_size would otherwise execute at a wildly different
+  // (near step-1) granularity than the label claims.
+  if (cfg.chunk_size <= 0) {
+    throw std::runtime_error("chunk_size must be > 0.");
+  }
+  if (cfg.chunk_overlap < 0 || cfg.chunk_overlap >= cfg.chunk_size) {
+    throw std::runtime_error("chunk_overlap must be in [0, chunk_size).");
+  }
   cfg.top_k = readRequired<int>(root, "top_k");
   cfg.rerank_candidate_k = readOptional<int>(root, "rerank_candidate_k", cfg.top_k * 3);
+  cfg.sentence_window_size = readOptional<int>(root, "sentence_window_size", 1);
+  if (cfg.sentence_window_size < 0) {
+    throw std::runtime_error("sentence_window_size must be >= 0.");
+  }
   cfg.reranker = readRerankerConfig(root["reranker"]);
   cfg.prompt = readPromptConfig(root["prompt"]);
 

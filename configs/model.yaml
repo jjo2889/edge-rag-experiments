@@ -28,7 +28,19 @@ repetition_penalty: 1.1
 repetition_penalty_last_n: 64
 
 # 반복 출력이나 프롬프트 재생산이 시작되면 여기서 자른다.
+#
+# PromptBuilder는 두 가지 표식을 찍는다: 섹션 헤더는 대괄호로(`[Passages]`),
+# 개별 항목 라벨은 대괄호 없이(`Passage 1:`, `Evidence 1:`). 아래 목록은 원래
+# 대괄호 형태만 담고 있어서, 모델이 답변 뒤에 `Passage 4:` 하고 컨텍스트 나열을
+# 이어가면 아무것도 매칭되지 않아 max_new_tokens까지 폭주했다.
+# NQ 25질의 실측: 구조 누수 20%, 상한 도달 24%.
+# 항목 라벨 두 줄을 추가해 그 구멍을 메운다 (2026-08-01).
+#   NQ  : 구조 누수 20% -> 0%, 상한 24% -> 8%, 생성 평균 2013ms -> 1441ms
+#   SciFact: 25건 중 24건 무변화(정상 답변을 자르지 않음), 폭주 1건만 단축
+# 매칭에 선행 개행을 요구하므로 문장 중간의 같은 단어는 걸리지 않는다.
 stop_strings:
+  - "\nPassage "
+  - "\nEvidence "
   - "\nI don't know"
   - "\n[Citation"
   - "\n[Explanation"

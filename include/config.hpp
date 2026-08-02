@@ -55,6 +55,11 @@ struct RetrievalConfig {
   int chunk_overlap;
   int top_k;
   int rerank_candidate_k;
+  // Sentences kept on each side of the representative sentence in
+  // advanced=sentence_window. Was hard-coded to 1; it is the single knob that
+  // defines the technique, so it belongs in the config and in the echoed
+  // run_config rather than in the source.
+  int sentence_window_size;
   RerankerConfig reranker;
   PromptConfig prompt;
 };

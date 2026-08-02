@@ -5,6 +5,8 @@
 #include <sstream>
 #include <string>
 
+#include "utf8_util.hpp"
+
 namespace rag {
 
 namespace {
@@ -25,6 +27,35 @@ std::string trim(const std::string& text) {
   return text.substr(begin, end - begin);
 }
 
+// Strip a leading section marker / label the model tends to echo, e.g.
+// "[Rewritten Query]", "Rewritten query:", "Here is the rewritten query:".
+std::string stripLeadingMarker(const std::string& line) {
+  std::string out = line;
+  // Whole-line bracketed marker like "[Rewritten Query]" -> empty (skip).
+  if (out.size() >= 2 && out.front() == '[' && out.back() == ']') {
+    return {};
+  }
+  // Leading "Something:" label prefix (letters/spaces before the first colon,
+  // colon near the start) -> drop the label, keep the rest.
+  const size_t colon = out.find(':');
+  if (colon != std::string::npos && colon <= 40) {
+    bool label_like = true;
+    for (size_t i = 0; i < colon; ++i) {
+      const char c = out[i];
+      if (std::isalpha(static_cast<unsigned char>(c)) == 0 && c != ' ') {
+        label_like = false;
+        break;
+      }
+    }
+    if (label_like && colon + 1 < out.size()) {
+      out = trim(out.substr(colon + 1));
+    } else if (label_like) {
+      out.clear();
+    }
+  }
+  return out;
+}
+
 std::string firstNonEmptyLine(const std::string& text) {
   std::istringstream in(text);
   std::string line;
@@ -36,6 +67,7 @@ std::string firstNonEmptyLine(const std::string& text) {
     if (!line.empty() && line.front() == '"' && line.back() == '"' && line.size() >= 2) {
       line = trim(line.substr(1, line.size() - 2));
     }
+    line = stripLeadingMarker(line);
     if (!line.empty()) {
       return line;
     }
@@ -64,7 +96,7 @@ QueryTransformResult sanitizeQueryRewrite(const std::string& generated_text, con
     return QueryTransformResult{fallback_query, true};
   }
   if (rewritten.size() > kMaxRewriteChars) {
-    rewritten.resize(kMaxRewriteChars);
+    truncateUtf8(rewritten, kMaxRewriteChars);
     rewritten = trim(rewritten);
   }
   if (rewritten.empty()) {

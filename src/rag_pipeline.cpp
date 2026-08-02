@@ -19,26 +19,49 @@ RagPipeline::RagPipeline(const Retriever& retriever,
                          const int top_k,
                          const int rerank_candidate_k,
                          const BgeReranker* bge_reranker,
-                         std::vector<DocumentSentence> sentences)
+                         std::vector<DocumentSentence> sentences,
+                         const int sentence_window_size)
     : retriever_(&retriever),
       prompt_builder_(&prompt_builder),
       generator_(&generator),
       bge_reranker_(bge_reranker),
       top_k_(std::max(1, top_k)),
       rerank_candidate_k_(std::max(std::max(1, top_k), rerank_candidate_k)),
-      sentences_(std::move(sentences)) {}
+      sentence_window_size_(std::max(0, sentence_window_size)),
+      sentences_(std::move(sentences)),
+      // Built once here rather than per query: a per-call scan of the whole
+      // sentence store made context_transform_ms measure the scan, not the mode.
+      sentence_index_(sentences_) {}
 
-RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced) const {
+RagResult RagPipeline::run(const std::string& query,
+                           const AdvancedMode advanced,
+                           const TokenCallback& on_token) const {
   const auto total_start = std::chrono::steady_clock::now();
 
   const auto query_transform_start = std::chrono::steady_clock::now();
   std::string retrieval_query = query;
+  bool transform_used_fallback = false;
+  int aux_prompt_tokens = 0;
+  int aux_output_tokens = 0;
+  // Auxiliary generations pass an empty system prompt so they don't inherit the
+  // final-answer QA system prompt (which would turn a rewrite into "Label: ..." /
+  // "I don't know"). The final answer below still uses the configured QA prompt.
   if (advanced == AdvancedMode::QueryRewrite) {
-    const GenerationTrace rewrite_trace = generator_->generateWithTrace(buildQueryRewritePrompt(query));
-    retrieval_query = sanitizeQueryRewrite(rewrite_trace.output_text, query).text;
+    const GenerationTrace rewrite_trace =
+        generator_->generateWithSystemPrompt(buildQueryRewritePrompt(query), "");
+    const QueryTransformResult rewrite = sanitizeQueryRewrite(rewrite_trace.output_text, query);
+    retrieval_query = rewrite.text;
+    transform_used_fallback = rewrite.used_fallback;
+    aux_prompt_tokens += rewrite_trace.prompt_tokens;
+    aux_output_tokens += rewrite_trace.output_tokens;
   } else if (advanced == AdvancedMode::Hyde) {
-    const GenerationTrace hyde_trace = generator_->generateWithTrace(buildHydePrompt(query));
-    retrieval_query = sanitizeHydeDocument(hyde_trace.output_text, query).document;
+    const GenerationTrace hyde_trace =
+        generator_->generateWithSystemPrompt(buildHydePrompt(query), "");
+    const HydeTransformResult hyde = sanitizeHydeDocument(hyde_trace.output_text, query);
+    retrieval_query = hyde.document;
+    transform_used_fallback = hyde.used_fallback;
+    aux_prompt_tokens += hyde_trace.prompt_tokens;
+    aux_output_tokens += hyde_trace.output_tokens;
   }
   const auto query_transform_end = std::chrono::steady_clock::now();
 
@@ -48,22 +71,37 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
   const auto retrieve_end = std::chrono::steady_clock::now();
 
   const auto rerank_start = std::chrono::steady_clock::now();
+  std::string reranker_backend_used;
   if (advanced == AdvancedMode::Rerank) {
     if (bge_reranker_) {
       contexts = bge_reranker_->rerank(query, contexts, top_k_);
+      reranker_backend_used = "bge";
     } else {
       contexts = rerankByLexicalOverlap(query, contexts, top_k_);
+      reranker_backend_used = "lexical";
     }
   }
   const auto rerank_end = std::chrono::steady_clock::now();
 
   const auto context_transform_start = std::chrono::steady_clock::now();
+  std::vector<RetrievedChunk> pre_transform_contexts;
   if (advanced == AdvancedMode::SentenceWindow) {
-    contexts = expandSentenceWindows(query, contexts, sentences_, 1);
+    contexts = expandSentenceWindows(query, contexts, sentence_index_, sentence_window_size_);
   } else if (advanced == AdvancedMode::ContextualCompression) {
     const GenerationTrace compression_trace =
-        generator_->generateWithTrace(buildContextualCompressionPrompt(query, contexts));
-    contexts = buildCompressedContexts(compression_trace.output_text, contexts).contexts;
+        generator_->generateWithSystemPrompt(buildContextualCompressionPrompt(query, contexts), "");
+    const ContextCompressionResult compression =
+        buildCompressedContexts(compression_trace.output_text, contexts);
+    aux_prompt_tokens += compression_trace.prompt_tokens;
+    aux_output_tokens += compression_trace.output_tokens;
+    // Compression replaces the retrieved passages with one synthetic chunk that
+    // has no doc_id of its own. Keep the originals so retrieval quality for this
+    // mode stays measurable.
+    if (!compression.used_fallback) {
+      pre_transform_contexts = contexts;
+    }
+    contexts = compression.contexts;
+    transform_used_fallback = compression.used_fallback;
   }
   const auto context_transform_end = std::chrono::steady_clock::now();
 
@@ -72,7 +110,9 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
   const auto prompt_build_end = std::chrono::steady_clock::now();
 
   const auto generate_start = std::chrono::steady_clock::now();
-  const GenerationTrace generation_trace = generator_->generateWithTrace(prompt_body);
+  const GenerationTrace generation_trace =
+      on_token ? generator_->generateWithTrace(prompt_body, on_token)
+               : generator_->generateWithTrace(prompt_body);
   const auto generate_end = std::chrono::steady_clock::now();
 
   RagResult result;
@@ -86,24 +126,33 @@ RagResult RagPipeline::run(const std::string& query, const AdvancedMode advanced
   result.prompt_tokens_before_truncation = generation_trace.prompt_tokens_before_truncation;
   result.prompt_tokens = generation_trace.prompt_tokens;
   result.output_tokens = generation_trace.output_tokens;
+  result.aux_prompt_tokens = aux_prompt_tokens;
+  result.aux_output_tokens = aux_output_tokens;
   result.prompt_truncated = generation_trace.prompt_truncated;
-  result.query_transform_ms =
-      std::chrono::duration_cast<std::chrono::milliseconds>(query_transform_end - query_transform_start).count();
-  result.retrieve_ms = std::chrono::duration_cast<std::chrono::milliseconds>(retrieve_end - retrieve_start).count();
-  result.rerank_ms = std::chrono::duration_cast<std::chrono::milliseconds>(rerank_end - rerank_start).count();
-  result.context_transform_ms =
-      std::chrono::duration_cast<std::chrono::milliseconds>(context_transform_end - context_transform_start).count();
-  result.prompt_build_ms =
-      std::chrono::duration_cast<std::chrono::milliseconds>(prompt_build_end - prompt_build_start).count();
-  result.generate_ms = std::chrono::duration_cast<std::chrono::milliseconds>(generate_end - generate_start).count();
-  result.total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(generate_end - total_start).count();
+  // Round to milliseconds once, from a microsecond measurement. Truncating each
+  // stage with duration_cast<milliseconds> floored every sub-millisecond stage to
+  // 0 and made the stage sum fall short of total for no real reason.
+  const auto elapsedMs = [](const auto& from, const auto& to) -> int64_t {
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(to - from).count();
+    return (us + 500) / 1000;
+  };
+  result.query_transform_ms = elapsedMs(query_transform_start, query_transform_end);
+  result.retrieve_ms = elapsedMs(retrieve_start, retrieve_end);
+  result.rerank_ms = elapsedMs(rerank_start, rerank_end);
+  result.context_transform_ms = elapsedMs(context_transform_start, context_transform_end);
+  result.prompt_build_ms = elapsedMs(prompt_build_start, prompt_build_end);
+  result.generate_ms = elapsedMs(generate_start, generate_end);
+  result.total_ms = elapsedMs(total_start, generate_end);
 
   const double generate_sec = std::chrono::duration<double>(generate_end - generate_start).count();
   if (generate_sec > 0.0) {
     result.output_tokens_per_sec = static_cast<double>(result.output_tokens) / generate_sec;
   }
 
+  result.transform_used_fallback = transform_used_fallback;
+  result.reranker_backend_used = reranker_backend_used;
   result.contexts = contexts;
+  result.pre_transform_contexts = std::move(pre_transform_contexts);
   return result;
 }
 

@@ -1,0 +1,18 @@
+Use only the evidence.
+Decide if the evidence supports or refutes the claim.
+
+Output exactly two lines.
+Line 1 must be one of:
+Label: SUPPORTS
+Label: REFUTES
+Label: NOT_ENOUGH_INFO
+Line 2 must be:
+Reason: one short sentence
+
+Use NOT_ENOUGH_INFO if the evidence is missing or unclear.
+Do not add anything else.
+
+# ARCHIVED 2026-08-01. Replaced because the 270M model echoed this prompt's
+# literal output-format lines ("Line 1 must be one of: Label: SUPPORTS ...")
+# back as its answer in 43% of queries instead of answering. Enumerating exact
+# output tokens is what triggered the copying. See CODE_REVIEW_FIXES.md.

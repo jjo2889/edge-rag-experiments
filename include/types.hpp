@@ -34,6 +34,11 @@ struct RetrievedChunk {
   float score = 0.0F;
   float rerank_score = 0.0F;
   bool has_rerank_score = false;
+  // False for chunks that are not a retrieved passage — currently only the
+  // merged chunk produced by contextual_compression, which has no retrieval
+  // score and no document of its own. Serialization emits null instead of an
+  // inherited score for these.
+  bool has_retrieval_score = true;
 };
 
 struct RagResult {
@@ -47,6 +52,11 @@ struct RagResult {
   int prompt_tokens_before_truncation = 0;
   int prompt_tokens = 0;
   int output_tokens = 0;
+  // Tokens spent on auxiliary LLM calls (query_rewrite / hyde /
+  // contextual_compression). These are real on-device work; leaving them out of
+  // the accounting understated those modes' token cost, throughput, and energy.
+  int aux_prompt_tokens = 0;
+  int aux_output_tokens = 0;
   bool prompt_truncated = false;
   int64_t query_transform_ms = 0;
   int64_t retrieve_ms = 0;
@@ -56,7 +66,22 @@ struct RagResult {
   int64_t generate_ms = 0;
   int64_t total_ms = 0;
   double output_tokens_per_sec = 0.0;
+  // True when an advanced transform (query_rewrite / hyde / contextual_compression)
+  // produced empty/unusable output and the pipeline silently reverted to the
+  // original query / uncompressed contexts. Lets analysis separate genuine
+  // transforms from fallbacks that were averaged into a mode's results.
+  bool transform_used_fallback = false;
+  // Which reranker actually ran for advanced=rerank: "" (not a rerank run),
+  // "lexical", or "bge". Guards against a rerank run silently using the lexical
+  // heuristic while the config claimed a cross-encoder.
+  std::string reranker_backend_used;
   std::vector<RetrievedChunk> contexts;
+  // For contextual_compression, the retrieved passages as they were BEFORE the
+  // compressor merged them into a single synthetic chunk. `contexts` for that
+  // mode has doc_id="compressed" and carries no usable retrieval provenance, so
+  // hit@k / MRR / doc_id-based metrics must be computed from this field instead.
+  // Empty for every other mode (where `contexts` is already the retrieval output).
+  std::vector<RetrievedChunk> pre_transform_contexts;
 };
 
 }  // namespace rag

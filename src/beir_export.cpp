@@ -222,12 +222,13 @@ nlohmann::json buildPredictionRow(const std::string& sample_id,
                                   const std::string& user_input,
                                   const RagResult& result,
                                   const double memory_mb,
+                                  const int64_t model_load_ms,
                                   const std::vector<std::string>& qrel_doc_ids,
                                   const std::string& reference) {
   std::vector<std::string> retrieved_contexts;
   std::vector<int> retrieved_ranks;
   std::vector<std::string> retrieved_doc_ids;
-  std::vector<float> retrieved_scores;
+  std::vector<nlohmann::json> retrieved_scores;
   std::vector<nlohmann::json> retrieved_rerank_scores;
   std::vector<int> retrieved_sentence_begins;
   std::vector<int> retrieved_sentence_ends;
@@ -239,12 +240,22 @@ nlohmann::json buildPredictionRow(const std::string& sample_id,
   retrieved_sentence_begins.reserve(result.contexts.size());
   retrieved_sentence_ends.reserve(result.contexts.size());
 
-  for (size_t i = 0; i < result.contexts.size(); ++i) {
-    const auto& c = result.contexts[i];
+  // For contextual_compression the prompt contexts are one synthetic chunk with
+  // no doc_id, so retrieval metrics must be scored against what was actually
+  // retrieved. Use pre_transform_contexts for the retrieval columns whenever the
+  // mode recorded them; `retrieved_contexts` still holds the texts the generator
+  // saw.
+  const std::vector<RetrievedChunk>& provenance =
+      result.pre_transform_contexts.empty() ? result.contexts : result.pre_transform_contexts;
+
+  for (const auto& c : result.contexts) {
     retrieved_contexts.push_back(c.chunk.text);
+  }
+  for (size_t i = 0; i < provenance.size(); ++i) {
+    const auto& c = provenance[i];
     retrieved_ranks.push_back(static_cast<int>(i + 1));
     retrieved_doc_ids.push_back(c.chunk.doc_id);
-    retrieved_scores.push_back(c.score);
+    retrieved_scores.push_back(c.has_retrieval_score ? nlohmann::json(c.score) : nlohmann::json(nullptr));
     retrieved_rerank_scores.push_back(c.has_rerank_score ? nlohmann::json(c.rerank_score) : nlohmann::json(nullptr));
     retrieved_sentence_begins.push_back(c.chunk.sentence_begin);
     retrieved_sentence_ends.push_back(c.chunk.sentence_end);
@@ -267,7 +278,12 @@ nlohmann::json buildPredictionRow(const std::string& sample_id,
   row["retrieved_rerank_scores"] = retrieved_rerank_scores;
   row["retrieved_sentence_begins"] = retrieved_sentence_begins;
   row["retrieved_sentence_ends"] = retrieved_sentence_ends;
-  row["trace"] = query::buildTraceJson(result, memory_mb);
+  // Present only for modes that replace the retrieved passages (compression);
+  // null elsewhere, where retrieved_contexts is already the retrieval output.
+  row["pre_transform_contexts"] = result.pre_transform_contexts.empty()
+                                      ? nlohmann::json(nullptr)
+                                      : query::buildContextRows(result.pre_transform_contexts);
+  row["trace"] = query::buildTraceJson(result, memory_mb, model_load_ms);
 
   return row;
 }
@@ -277,7 +293,8 @@ void writeManifestJson(const BeirExportOptions& options,
                        const RetrievalConfig& retrieval_cfg,
                        const std::string& model_config_path,
                        const std::string& retrieval_config_path,
-                       const size_t rows_written) {
+                       const size_t rows_written,
+                       const std::vector<std::string>& skipped_sample_ids) {
   const std::string manifest_path = buildBeirManifestJsonPath(options.output_jsonl_path);
   const fs::path out_path(manifest_path);
   if (out_path.has_parent_path()) {
@@ -292,6 +309,8 @@ void writeManifestJson(const BeirExportOptions& options,
   manifest["advanced"] = advancedModeToString(options.advanced);
   manifest["output_jsonl"] = options.output_jsonl_path;
   manifest["rows_written"] = rows_written;
+  manifest["rows_skipped"] = skipped_sample_ids.size();
+  manifest["skipped_sample_ids"] = skipped_sample_ids;
   manifest["inputs"] =
       nlohmann::json{{"questions", options.questions_path},
                      {"qrels", options.qrels_path},
@@ -318,7 +337,8 @@ size_t exportBeirPredictionsJsonl(const RagPipeline& pipeline,
                                   const RetrievalConfig& retrieval_cfg,
                                   const BeirExportOptions& options,
                                   const std::string& model_config_path,
-                                  const std::string& retrieval_config_path) {
+                                  const std::string& retrieval_config_path,
+                                  const int64_t model_load_ms) {
   const auto queries = loadQueriesJsonl(options.questions_path);
   std::unordered_map<std::string, std::string> query_text_by_id;
   query_text_by_id.reserve(queries.size());
@@ -335,9 +355,14 @@ size_t exportBeirPredictionsJsonl(const RagPipeline& pipeline,
     fs::create_directories(out_path.parent_path());
   }
 
-  std::ofstream out(options.output_jsonl_path);
+  // Write to a temp path and rename on success so a crash mid-batch never
+  // leaves a partial JSONL at the final path masquerading as a complete run.
+  // The manifest is written only after the rename, so its existence is the
+  // completion signal for downstream consumers.
+  const std::string tmp_jsonl_path = options.output_jsonl_path + ".tmp";
+  std::ofstream out(tmp_jsonl_path, std::ios::trunc);
   if (!out) {
-    throw std::runtime_error("Failed to open output_jsonl for write: " + options.output_jsonl_path);
+    throw std::runtime_error("Failed to open output_jsonl for write: " + tmp_jsonl_path);
   }
 
   std::cerr << "[info] reference_policy=qrels_positive_docs_title_plus_text_concat\n";
@@ -345,8 +370,13 @@ size_t exportBeirPredictionsJsonl(const RagPipeline& pipeline,
   std::cerr << "[info] split=" << options.split << '\n';
 
   size_t written = 0;
+  std::vector<std::string> skipped_sample_ids;
   for (const auto& sample_id : qrel_query_order) {
-    if (options.limit > 0 && static_cast<int>(written) >= options.limit) {
+    // Bound on rows ATTEMPTED, not rows written: now that a failing row is
+    // skipped rather than fatal, a limit on writes would let a run where every
+    // row fails walk the entire split instead of stopping after N queries.
+    const size_t attempted = written + skipped_sample_ids.size();
+    if (options.limit > 0 && static_cast<int>(attempted) >= options.limit) {
       break;
     }
 
@@ -360,30 +390,70 @@ size_t exportBeirPredictionsJsonl(const RagPipeline& pipeline,
     const std::vector<std::string> qrel_doc_ids =
         (qrel_it == qrels.end()) ? std::vector<std::string>() : qrel_it->second;
     const std::string reference = buildReferenceFromQrels(qrel_doc_ids, corpus_by_id);
-
-    const RagResult result = pipeline.run(query_it->second, options.advanced);
-    const double memory_mb = query::getResidentMemoryMb();
-    if (isBlank(result.answer)) {
-      throw std::runtime_error("Empty response generated for sample_id=" + sample_id);
+    if (!qrel_doc_ids.empty() && reference.empty()) {
+      std::cerr << "[warn] sample_id=" << sample_id << " has " << qrel_doc_ids.size()
+                << " positive qrel doc(s) but none matched the corpus; reference is EMPTY "
+                   "(RAGAS reference-based metrics will be meaningless for this row). "
+                   "Check corpus file / id scheme.\n";
     }
 
-    nlohmann::json row =
-        buildPredictionRow(sample_id,
-                           options.dataset,
-                           options.split,
-                           query_it->second,
-                           result,
-                           memory_mb,
-                           qrel_doc_ids,
-                           reference);
-    out << row.dump() << '\n';
-    ++written;
+    // One bad row (pipeline exception, empty generation) must not abort a
+    // multi-hour batch: skip it with a warning, record it in the manifest, and
+    // keep going. Downstream sees the skip via rows_skipped/skipped_sample_ids.
+    try {
+      const RagResult result = pipeline.run(query_it->second, options.advanced);
+      const double memory_mb = query::getResidentMemoryMb();
+      if (isBlank(result.answer)) {
+        throw std::runtime_error("empty generated response");
+      }
 
-    std::cerr << "[batch] wrote sample_id=" << sample_id << '\n';
+      nlohmann::json row =
+          buildPredictionRow(sample_id,
+                             options.dataset,
+                             options.split,
+                             query_it->second,
+                             result,
+                             memory_mb,
+                             model_load_ms,
+                             qrel_doc_ids,
+                             reference);
+      out << query::dumpSafe(row) << '\n';
+      ++written;
+
+      std::cerr << "[batch] wrote sample_id=" << sample_id << '\n';
+    } catch (const std::exception& e) {
+      skipped_sample_ids.push_back(sample_id);
+      std::cerr << "[batch][warn] SKIPPED sample_id=" << sample_id << ": " << e.what() << '\n';
+    }
   }
 
-  std::cerr << "[batch] output_jsonl=" << options.output_jsonl_path << " rows=" << written << '\n';
-  writeManifestJson(options, model_cfg, retrieval_cfg, model_config_path, retrieval_config_path, written);
+  out.flush();
+  if (!out) {
+    throw std::runtime_error("Failed while writing output_jsonl: " + tmp_jsonl_path);
+  }
+  out.close();
+
+  // A run where nothing survived is a failed run, not an empty success: leave
+  // the temp file in place (no rename, no manifest) so no downstream step can
+  // read a zero-row export as a completed one.
+  if (written == 0 && !skipped_sample_ids.empty()) {
+    throw std::runtime_error("Batch export produced 0 rows; all " +
+                             std::to_string(skipped_sample_ids.size()) +
+                             " attempted sample(s) failed. Partial output left at " + tmp_jsonl_path);
+  }
+  if (!skipped_sample_ids.empty()) {
+    std::cerr << "[batch][warn] " << skipped_sample_ids.size() << " of "
+              << (written + skipped_sample_ids.size())
+              << " attempted sample(s) were SKIPPED; per-mode metrics are computed over the "
+                 "written rows only (see manifest skipped_sample_ids).\n";
+  }
+
+  fs::rename(tmp_jsonl_path, options.output_jsonl_path);
+
+  std::cerr << "[batch] output_jsonl=" << options.output_jsonl_path << " rows=" << written
+            << " skipped=" << skipped_sample_ids.size() << '\n';
+  writeManifestJson(options, model_cfg, retrieval_cfg, model_config_path, retrieval_config_path, written,
+                    skipped_sample_ids);
   return written;
 }
 

@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -14,6 +15,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <poll.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -264,6 +266,103 @@ nlohmann::json errorJson(const std::string& message) {
   return nlohmann::json{{"status", "error"}, {"error", {{"message", message}}}};
 }
 
+// Owns a forked rag_query --stream process whose stdout is read incrementally
+// and forwarded to the HTTP client as Server-Sent Events. Holds g_child_mutex
+// for its whole lifetime so concurrent /query requests do not spawn multiple
+// model-loading children at once. Kills and reaps the child on destruction.
+struct StreamingChild {
+  pid_t pid = -1;
+  int stdout_fd = -1;
+  std::chrono::steady_clock::time_point deadline;
+  bool reaped = false;
+  std::unique_lock<std::mutex> gen_lock;
+
+  StreamingChild() = default;
+  StreamingChild(const StreamingChild&) = delete;
+  StreamingChild& operator=(const StreamingChild&) = delete;
+
+  ~StreamingChild() {
+    if (stdout_fd >= 0) {
+      close(stdout_fd);
+      stdout_fd = -1;
+    }
+    if (pid > 0 && !reaped) {
+      kill(pid, SIGKILL);
+      int status = 0;
+      waitpid(pid, &status, 0);
+      reaped = true;
+    }
+  }
+};
+
+std::shared_ptr<StreamingChild> startStreamingChild(const ServerOptions& options,
+                                                    const fs::path& request_path,
+                                                    const fs::path& stderr_path) {
+  std::unique_lock<std::mutex> gen_lock(g_child_mutex);
+
+  int stdout_pipe[2];
+  if (pipe(stdout_pipe) == -1) {
+    throw std::runtime_error("stdout pipe failed");
+  }
+
+  const int err_fd = open(stderr_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (err_fd == -1) {
+    close(stdout_pipe[0]);
+    close(stdout_pipe[1]);
+    throw std::runtime_error("failed to open stderr log for streaming child");
+  }
+
+  const pid_t pid = fork();
+  if (pid == -1) {
+    close(stdout_pipe[0]);
+    close(stdout_pipe[1]);
+    close(err_fd);
+    throw std::runtime_error("fork failed");
+  }
+
+  if (pid == 0) {
+    close(stdout_pipe[0]);
+    dup2(stdout_pipe[1], STDOUT_FILENO);
+    dup2(err_fd, STDERR_FILENO);
+    close(stdout_pipe[1]);
+    close(err_fd);
+
+    if (chdir(options.workdir.c_str()) == -1) {
+      std::cerr << "chdir failed: " << std::strerror(errno) << '\n';
+      _exit(127);
+    }
+
+    std::vector<std::string> args = {options.rag_query,
+                                     "--model_config",
+                                     options.model_config,
+                                     "--retrieval_config",
+                                     options.retrieval_config,
+                                     "--request_json",
+                                     request_path.string(),
+                                     "--stream"};
+    std::vector<char*> argv;
+    argv.reserve(args.size() + 1);
+    for (auto& arg : args) {
+      argv.push_back(arg.data());
+    }
+    argv.push_back(nullptr);
+
+    execvp(argv[0], argv.data());
+    std::cerr << "execvp failed: " << std::strerror(errno) << '\n';
+    _exit(127);
+  }
+
+  close(stdout_pipe[1]);
+  close(err_fd);
+
+  auto child = std::make_shared<StreamingChild>();
+  child->pid = pid;
+  child->stdout_fd = stdout_pipe[0];
+  child->deadline = std::chrono::steady_clock::now() + std::chrono::seconds(options.timeout_sec);
+  child->gen_lock = std::move(gen_lock);
+  return child;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -285,6 +384,86 @@ int main(int argc, char** argv) {
     });
 
     server.Post("/query", [&](const httplib::Request& req, httplib::Response& res) {
+      bool stream = false;
+      try {
+        const auto parsed = nlohmann::json::parse(req.body);
+        stream = parsed.value("stream", false);
+      } catch (...) {
+        stream = false;
+      }
+
+      if (stream) {
+        fs::path request_path;
+        fs::path stderr_path;
+        std::shared_ptr<StreamingChild> child;
+        try {
+          request_path = makeRequestPath(options.request_log_dir);
+          writeFile(request_path, req.body);
+          stderr_path = request_path.string() + ".stderr.log";
+          child = startStreamingChild(options, request_path, stderr_path);
+        } catch (const std::exception& e) {
+          res.status = 500;
+          res.set_content(errorJson(e.what()).dump(), "application/json");
+          return;
+        }
+
+        res.set_header("Cache-Control", "no-cache");
+        res.set_header("X-Accel-Buffering", "no");
+        res.set_chunked_content_provider(
+            "text/event-stream",
+            [child](size_t /*offset*/, httplib::DataSink& sink) -> bool {
+              if (child->stdout_fd < 0) {
+                return false;
+              }
+
+              struct pollfd pfd;
+              pfd.fd = child->stdout_fd;
+              pfd.events = POLLIN;
+              pfd.revents = 0;
+
+              const int pr = poll(&pfd, 1, 500);
+              if (pr < 0) {
+                if (errno == EINTR) {
+                  return true;
+                }
+                sink.done();
+                return false;
+              }
+              if (pr == 0) {
+                if (std::chrono::steady_clock::now() >= child->deadline) {
+                  const std::string msg =
+                      "data: {\"event\":\"error\",\"result\":{\"status\":\"error\",\"error\":"
+                      "{\"message\":\"rag_query timed out\"}}}\n\ndata: [DONE]\n\n";
+                  sink.write(msg.data(), msg.size());
+                  sink.done();
+                  return false;
+                }
+                return true;
+              }
+
+              char buffer[4096];
+              const ssize_t n = read(child->stdout_fd, buffer, sizeof(buffer));
+              if (n > 0) {
+                return sink.write(buffer, static_cast<size_t>(n));
+              }
+              if (n == 0) {
+                int status = 0;
+                waitpid(child->pid, &status, 0);
+                child->reaped = true;
+                close(child->stdout_fd);
+                child->stdout_fd = -1;
+                sink.done();
+                return false;
+              }
+              if (errno == EAGAIN || errno == EINTR) {
+                return true;
+              }
+              sink.done();
+              return false;
+            });
+        return;
+      }
+
       try {
         const fs::path request_path = makeRequestPath(options.request_log_dir);
         writeFile(request_path, req.body);
@@ -308,7 +487,37 @@ int main(int argc, char** argv) {
         }
         if (child.stdout_text.empty()) {
           res.status = 500;
-          res.set_content(errorJson("rag_query produced no stdout").dump(), "application/json");
+          res.set_content(errorJson("rag_query produced no stdout (exit_code=" +
+                                    std::to_string(child.exit_code) + ")")
+                              .dump(),
+                          "application/json");
+          return;
+        }
+
+        // A child killed mid-write (OOM, crash) can leave truncated stdout;
+        // relaying it as 200 application/json hands the client garbage that
+        // gets recorded as a real answer. Validate before responding.
+        bool stdout_is_json = true;
+        try {
+          const auto parsed = nlohmann::json::parse(child.stdout_text);
+          static_cast<void>(parsed);
+        } catch (const std::exception&) {
+          stdout_is_json = false;
+        }
+        if (!stdout_is_json) {
+          res.status = 500;
+          res.set_content(errorJson("rag_query stdout is not valid JSON (exit_code=" +
+                                    std::to_string(child.exit_code) + ")")
+                              .dump(),
+                          "application/json");
+          return;
+        }
+        if (child.exit_code != 0) {
+          // rag_query exits 1 with a structured {"status":"error",...} body;
+          // forward that body but with a 5xx status so clients cannot mistake
+          // it for success.
+          res.status = 500;
+          res.set_content(child.stdout_text, "application/json");
           return;
         }
 

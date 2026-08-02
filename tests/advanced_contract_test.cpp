@@ -7,6 +7,7 @@
 
 #include "advanced_mode.hpp"
 #include "advanced_query_transformer.hpp"
+#include "bert_basic_tokenizer.hpp"
 #include "contextual_compressor.hpp"
 #include "hyde_transformer.hpp"
 #include "query_request_io.hpp"
@@ -286,6 +287,115 @@ void testSentenceWindowCrossDocIsolation() {
           "sentence window must not include other documents");
 }
 
+void testCompressedContextDropsInheritedProvenance() {
+  const auto contexts = sampleContexts();
+  const rag::ContextCompressionResult result = rag::buildCompressedContexts("Relevant evidence only.", contexts);
+  const auto& merged = result.contexts.front();
+  require(!merged.has_retrieval_score, "compressed chunk must not claim a retrieval score");
+  require(!merged.has_rerank_score, "compressed chunk must not inherit a rerank score");
+  require(merged.chunk.sentence_begin == -1 && merged.chunk.sentence_end == -1,
+          "compressed chunk must not inherit a sentence range");
+  require(merged.chunk.doc_chunk_index == -1, "compressed chunk must not inherit doc_chunk_index");
+}
+
+void testSentenceWindowDeduplicatesIdenticalWindows() {
+  // Two overlapping chunks of the same document that expand to the same window.
+  const std::vector<rag::RetrievedChunk> hits = {makeHit("doc-1", 0, 3, "chunk a"),
+                                                 makeHit("doc-1", 1, 3, "chunk b")};
+  const std::vector<rag::RetrievedChunk> expanded =
+      rag::expandSentenceWindows("biomaterials bone", hits, sampleSentences(), 1);
+
+  require(expanded.size() == 1, "identical sentence windows must be deduplicated");
+  require(expanded.front().chunk.sentence_begin == 0, "surviving window begin mismatch");
+  require(expanded.front().chunk.sentence_end == 3, "surviving window end mismatch");
+}
+
+void testSentenceIndexRangeIsScopedToDocument() {
+  const auto sentences = sampleSentences();
+  const rag::SentenceIndex index(sentences);
+
+  const auto doc1 = index.range("doc-1", 0, 3);
+  require(doc1.size() == 3, "doc-1 window size mismatch");
+  require(doc1.front()->sentence_index == 0 && doc1.back()->sentence_index == 2, "doc-1 window ordering mismatch");
+
+  const auto doc2 = index.range("doc-2", 0, 3);
+  require(doc2.size() == 1, "doc-2 must not pull in other documents");
+
+  require(index.range("missing-doc", 0, 3).empty(), "unknown doc must yield an empty range");
+  require(index.range("doc-1", 5, 9).empty(), "out-of-range window must be empty");
+}
+
+void testBasicTokenizerHandlesUtf8() {
+  // Byte-wise tokenization used to turn each continuation byte into its own
+  // "word", so `café` produced caf + two unmatchable fragments.
+  const auto accented = rag::bertBasicTokenize("Caf\xC3\xA9 au lait", true);
+  require(accented.size() == 3, "accented input token count mismatch");
+  require(accented[0] == "cafe", "lowercase + accent strip failed for cafe");
+
+  // Combining-mark form must normalize to the same token as the precomposed one.
+  const auto decomposed = rag::bertBasicTokenize("Cafe\xCC\x81", true);
+  require(decomposed.size() == 1 && decomposed[0] == "cafe", "combining mark must be stripped");
+
+  // Curly quotes / en dash are punctuation: their own tokens, word left intact.
+  const auto punctuation = rag::bertBasicTokenize("don\xE2\x80\x99t\xE2\x80\x94stop", true);
+  require(punctuation.size() == 5, "unicode punctuation must split into standalone tokens");
+  require(punctuation[0] == "don" && punctuation[2] == "t" && punctuation[4] == "stop",
+          "unicode punctuation split mismatch");
+
+  // CJK ideographs are one token each.
+  const auto cjk = rag::bertBasicTokenize("\xE6\x97\xA5\xE6\x9C\xAC", true);
+  require(cjk.size() == 2, "CJK characters must each be their own token");
+
+  // Characters without a canonical decomposition survive unchanged, as in HF.
+  const auto no_decomp = rag::bertBasicTokenize("\xC3\xB8l", true);
+  require(no_decomp.size() == 1 && no_decomp[0] == "\xC3\xB8l", "non-decomposable letter must be preserved");
+
+  // Truncated UTF-8 must not hang or emit garbage words.
+  const auto truncated = rag::bertBasicTokenize("abc\xC3", true);
+  require(truncated.size() == 1 && truncated[0] == "abc", "invalid trailing byte must be dropped");
+
+  require(rag::utf8Length("caf\xC3\xA9") == 4, "utf8Length must count code points");
+}
+
+void testHydeSanitizerStripsMarkersAndMarkdown() {
+  // Shape the model actually produces on the Pi (observed 2026-08-01): a bold
+  // section header followed by markdown-bulleted prose.
+  const std::string generated =
+      "**Hypothetical Document:**\n"
+      "\n"
+      "*   **Question:** Does cardiac injury increase mortality?\n"
+      "Cardiac troponin elevation predicted in-hospital death.";
+  const rag::HydeTransformResult result = rag::sanitizeHydeDocument(generated, "fallback query");
+
+  require(!result.used_fallback, "hyde sanitizer must not fall back on valid markdown output");
+  require(result.document.rfind("Hypothetical Document", 0) != 0,
+          "hyde document must not start with the model's section header");
+  require(result.document.find('*') == std::string::npos, "hyde document must not keep markdown emphasis");
+  require(result.document.rfind("Question: Does cardiac injury", 0) == 0,
+          "hyde document must start with the generated content");
+  require(result.document.find("troponin") != std::string::npos, "hyde document must keep the body text");
+}
+
+void testHydeSanitizerKeepsPlainProse() {
+  const rag::HydeTransformResult result =
+      rag::sanitizeHydeDocument("Cardiac injury is associated with higher mortality.", "fallback");
+  require(!result.used_fallback, "plain prose must not fall back");
+  require(result.document == "Cardiac injury is associated with higher mortality.",
+          "plain prose must pass through unchanged");
+}
+
+void testHydeSanitizerFallsBackOnMarkerOnlyOutput() {
+  const rag::HydeTransformResult result = rag::sanitizeHydeDocument("[Hypothetical Document]\n\n", "fallback query");
+  require(result.used_fallback, "marker-only output must fall back to the original query");
+  require(result.document == "fallback query", "fallback document mismatch");
+}
+
+void testBasicTokenizerPreservesCaseWhenNotLowercasing() {
+  const auto tokens = rag::bertBasicTokenize("Caf\xC3\xA9", false);
+  require(tokens.size() == 1, "no-lowercase token count mismatch");
+  require(tokens[0] == "Caf\xC3\xA9", "accents must be kept when do_lower_case is false");
+}
+
 }  // namespace
 
 int main() {
@@ -310,5 +420,13 @@ int main() {
   testSentenceWindowSizeZero();
   testSentenceWindowLegacyFallback();
   testSentenceWindowCrossDocIsolation();
+  testCompressedContextDropsInheritedProvenance();
+  testSentenceWindowDeduplicatesIdenticalWindows();
+  testSentenceIndexRangeIsScopedToDocument();
+  testBasicTokenizerHandlesUtf8();
+  testBasicTokenizerPreservesCaseWhenNotLowercasing();
+  testHydeSanitizerStripsMarkersAndMarkdown();
+  testHydeSanitizerKeepsPlainProse();
+  testHydeSanitizerFallsBackOnMarkerOnlyOutput();
   return 0;
 }

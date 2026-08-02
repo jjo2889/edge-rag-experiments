@@ -80,6 +80,7 @@ set(RAG_CORE_SOURCES
   src/config.cpp
   src/document_loader.cpp
   src/text_chunker.cpp
+  src/bert_basic_tokenizer.cpp
   src/embedding_model.cpp
   src/faiss_index.cpp
   src/retriever.cpp
@@ -158,6 +159,7 @@ if(BUILD_RAG_TESTS)
     src/contextual_compressor.cpp
     src/sentence_window.cpp
     src/text_chunker.cpp
+    src/bert_basic_tokenizer.cpp
     src/query_request_io.cpp
     src/reranker.cpp)
   target_include_directories(rag_contract_tests PRIVATE
