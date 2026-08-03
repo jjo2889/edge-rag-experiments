@@ -98,6 +98,7 @@ ModelConfig ConfigLoader::loadModelConfig(const std::string& path) {
   cfg.repetition_penalty = readRequired<float>(root, "repetition_penalty");
   cfg.repetition_penalty_last_n = readRequired<int>(root, "repetition_penalty_last_n");
   cfg.use_model_chat_template = readRequired<bool>(root, "use_model_chat_template");
+  cfg.reasoning_suppress_marker = readOptional<std::string>(root, "reasoning_suppress_marker", "");
   cfg.stop_strings = readRequired<std::vector<std::string>>(root, "stop_strings");
 
   return cfg;

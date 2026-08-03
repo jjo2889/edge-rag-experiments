@@ -76,6 +76,7 @@ set(RAG_CORE_SOURCES
   src/advanced_mode.cpp
   src/technique_effect.cpp
   src/context_source.cpp
+  src/reasoning_output.cpp
   src/advanced_query_transformer.cpp
   src/hyde_transformer.cpp
   src/contextual_compressor.cpp
@@ -158,6 +159,7 @@ if(BUILD_RAG_TESTS)
     src/advanced_mode.cpp
     src/technique_effect.cpp
   src/context_source.cpp
+  src/reasoning_output.cpp
     src/advanced_query_transformer.cpp
     src/hyde_transformer.cpp
     src/contextual_compressor.cpp

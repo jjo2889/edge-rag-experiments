@@ -11,6 +11,8 @@
 
 #include <llama.h>
 
+#include "reasoning_output.hpp"
+
 namespace rag {
 
 namespace {
@@ -241,8 +243,10 @@ GenerationTrace Generator::generateImpl(const std::string& prompt_body,
   }
 
   GenerationTrace trace;
-  trace.prompt_body = prompt_body;
-  trace.final_prompt = buildFinalPrompt(prompt_body, system_prompt);
+  trace.prompt_body = config_.reasoning_suppress_marker.empty()
+                          ? prompt_body
+                          : prompt_body + config_.reasoning_suppress_marker + "\n";
+  trace.final_prompt = buildFinalPrompt(trace.prompt_body, system_prompt);
 
   const int n_prompt =
       -llama_tokenize(vocab_, trace.final_prompt.c_str(), static_cast<int32_t>(trace.final_prompt.size()), nullptr, 0, true, true);
@@ -369,6 +373,7 @@ GenerationTrace Generator::generateImpl(const std::string& prompt_body,
     batch = llama_batch_get_one(&token, 1);
   }
   trace.output_tokens = output_tokens;
+  stripReasoningBlock(trace.output_text);
 
   return trace;
 }

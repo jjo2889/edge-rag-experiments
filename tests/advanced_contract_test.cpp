@@ -14,6 +14,7 @@
 #include "reranker.hpp"
 #include "sentence_window.hpp"
 #include "context_source.hpp"
+#include "reasoning_output.hpp"
 #include "technique_effect.hpp"
 #include "text_chunker.hpp"
 
@@ -546,6 +547,44 @@ void testContextSourceStrings() {
   require(threw, "unknown context source must throw");
 }
 
+
+std::string stripped(std::string text) {
+  rag::stripReasoningBlock(text);
+  return text;
+}
+
+void testEmptyReasoningBlockIsRemoved() {
+  require(stripped("<think>\n\n</think>\n\nSUPPORTS") == "SUPPORTS",
+          "/no_think still emits the markers; the answer is what follows them");
+}
+
+// The failure that motivated this: the auxiliary generations take the first
+// non-empty line, so an unstripped reply made "<think>" the retrieval query —
+// and the hygiene counter called it `applied`, because it did differ.
+void testReasoningMarkerNeverBecomesTheFirstLine() {
+  const std::string out = stripped("<think>\n\n</think>\n\nVitamin B12 deficiency raises homocysteine.");
+  require(out.rfind("<think>", 0) != 0, "reply must not start with the reasoning marker");
+  require(out == "Vitamin B12 deficiency raises homocysteine.", "answer text must survive intact");
+}
+
+void testFilledReasoningBlockIsRemoved() {
+  require(stripped("<think>\nWeighing the evidence...\n</think>\nNo.") == "No.",
+          "a non-empty reasoning block is dropped too");
+}
+
+// Reasoning ran past max_new_tokens: there is no answer in the reply at all.
+// Empty is the honest result — the sanitizers then take their fallback path.
+void testUnclosedReasoningBlockLeavesNothing() {
+  require(stripped("<think>\nOkay, let me think about ALDH1 and whether") == "",
+          "a truncated thought must not be handed downstream as the answer");
+}
+
+void testTextWithoutReasoningIsUntouched() {
+  require(stripped("The claim is supported.") == "The claim is supported.",
+          "models without a reasoning mode must be unaffected");
+  require(stripped("") == "", "empty stays empty");
+}
+
 }  // namespace
 
 int main() {
@@ -592,5 +631,10 @@ int main() {
   testOracleWithoutContextsIsRejected();
   testOracleContextsWithoutOracleSourceIsRejected();
   testContextSourceStrings();
+  testEmptyReasoningBlockIsRemoved();
+  testReasoningMarkerNeverBecomesTheFirstLine();
+  testFilledReasoningBlockIsRemoved();
+  testUnclosedReasoningBlockLeavesNothing();
+  testTextWithoutReasoningIsUntouched();
   return 0;
 }

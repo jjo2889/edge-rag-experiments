@@ -19,6 +19,15 @@ n_threads: 4
 # "즉시 EOG로 빈 응답" 회귀는 재현되지 않았다 (2026-08-02).
 use_model_chat_template: true
 
+# 이 모델의 모든 프롬프트(최종 답변과 보조 생성 양쪽)에 덧붙일 문자열.
+#
+# 하이브리드 추론 모델은 스위치가 없으면(Qwen3는 "/no_think") 토큰 예산을 전부
+# 사고에 쓰고 답을 내지 않는다. 데이터셋 프롬프트 파일이 아니라 여기 두는
+# 이유는 둘이다. 보조 생성은 시스템 프롬프트를 빈 문자열로 넘기므로 그쪽에
+# 넣으면 닿지 않고, 데이터셋 프롬프트는 모델 중립이어야 한다.
+# 추론 모드가 없는 모델에서는 비워둔다.
+reasoning_suppress_marker: ""
+
 # Generation length policy:
 # - Supported key: max_new_tokens
 # - Unsupported key: max_tokens (startup error)

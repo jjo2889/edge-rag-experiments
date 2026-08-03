@@ -28,6 +28,15 @@ struct ModelConfig {
 
   // Optional generation guards for instruction/chat models.
   bool use_model_chat_template;
+  // Appended to every prompt this model sees, main and auxiliary alike.
+  //
+  // Hybrid-reasoning models need a switch ("/no_think" for Qwen3) or they spend
+  // the whole token budget on chain of thought and return no answer. It belongs
+  // here rather than in the dataset prompt files for two reasons: the auxiliary
+  // generations pass an empty system prompt and would never see it, and the
+  // dataset prompts should stay model-agnostic. Empty for models without a
+  // reasoning mode.
+  std::string reasoning_suppress_marker;
   std::vector<std::string> stop_strings;
 };
 
