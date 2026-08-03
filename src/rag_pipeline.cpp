@@ -126,25 +126,40 @@ RagResult RagPipeline::run(const std::string& query,
     // whole document all return the input untouched.
     technique_effect = classifyContextTransform(false, before_expansion, contexts);
   } else if (advanced == AdvancedMode::ContextualCompression) {
-    const GenerationTrace compression_trace =
-        generator_->generateWithSystemPrompt(buildContextualCompressionPrompt(query, contexts), "");
-    const ContextCompressionResult compression =
-        buildCompressedContexts(compression_trace.output_text, contexts);
-    aux_prompt_tokens += compression_trace.prompt_tokens;
-    aux_output_tokens += compression_trace.output_tokens;
-    // Classified before `contexts` is overwritten below.
-    const TechniqueEffect compression_effect =
-        classifyCompression(compression.used_fallback, contexts, compression.contexts);
-    // Compression replaces the retrieved passages with one synthetic chunk that
-    // has no doc_id of its own. Keep the originals so retrieval quality for this
-    // mode stays measurable.
-    if (!compression.used_fallback) {
-      pre_transform_contexts = contexts;
+    // One call per document, as LLMChainExtractor does. Compressing all of them
+    // in a single call asks a small model to synthesise across documents, which
+    // is a harder task than the technique actually specifies.
+    std::vector<RetrievedChunk> compressed;
+    compressed.reserve(contexts.size());
+    bool any_fallback = false;
+    bool any_change = false;
+
+    for (const auto& context : contexts) {
+      const GenerationTrace compression_trace =
+          generator_->generateWithSystemPrompt(buildContextualCompressionPrompt(query, context), "");
+      aux_prompt_tokens += compression_trace.prompt_tokens;
+      aux_output_tokens += compression_trace.output_tokens;
+
+      const SingleContextCompression result =
+          compressSingleContext(compression_trace.output_text, context);
+      any_fallback = any_fallback || result.used_fallback;
+      if (result.dropped) {
+        // NO_OUTPUT: the document holds nothing relevant, so it leaves the
+        // prompt. Dropping every document is a legitimate outcome, not a
+        // failure — the generator then answers from an empty context.
+        any_change = true;
+        continue;
+      }
+      any_change = any_change || result.context.chunk.text != context.chunk.text;
+      compressed.push_back(result.context);
     }
-    contexts = compression.contexts;
-    transform_used_fallback = compression.used_fallback;
-    technique_effect = compression_effect;
+
+    contexts = std::move(compressed);
+    transform_used_fallback = any_fallback;
+    technique_effect = any_fallback ? TechniqueEffect::Fallback
+                                    : (any_change ? TechniqueEffect::Applied : TechniqueEffect::NoOp);
   }
+
   const auto context_transform_end = std::chrono::steady_clock::now();
 
   const auto prompt_build_start = std::chrono::steady_clock::now();

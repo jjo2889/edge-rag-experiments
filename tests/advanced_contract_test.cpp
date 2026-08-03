@@ -134,39 +134,9 @@ void testHydeFallback() {
   require(result.document == "fallback query", "HyDE fallback text mismatch");
 }
 
-std::vector<rag::RetrievedChunk> sampleContexts() {
-  rag::RetrievedChunk context;
-  context.chunk.chunk_id = 7;
-  context.chunk.doc_id = "doc-1";
-  context.chunk.text = "The retrieved evidence says the material is inductive.";
-  context.score = 0.75F;
-  return {context};
-}
 
-void testCompressionPrompt() {
-  const auto contexts = sampleContexts();
-  const std::string prompt = rag::buildContextualCompressionPrompt("Is the material inductive?", contexts);
-  require(prompt.find("Is the material inductive?") != std::string::npos, "compression prompt must include query");
-  require(prompt.find(contexts.front().chunk.text) != std::string::npos, "compression prompt must include context");
-}
 
-void testCompressedContext() {
-  const auto contexts = sampleContexts();
-  const rag::ContextCompressionResult result = rag::buildCompressedContexts("  Relevant evidence only.  ", contexts);
-  require(!result.used_fallback, "valid compression must not fallback");
-  require(result.contexts.size() == 1, "compressed context should be a single context");
-  require(result.contexts.front().chunk.doc_id == "compressed", "compressed context doc_id mismatch");
-  require(result.contexts.front().chunk.chunk_id == -1, "compressed context chunk_id mismatch");
-  require(result.contexts.front().chunk.text == "Relevant evidence only.", "compressed context trim failed");
-}
 
-void testCompressionFallback() {
-  const auto contexts = sampleContexts();
-  const rag::ContextCompressionResult result = rag::buildCompressedContexts(" \n\t", contexts);
-  require(result.used_fallback, "blank compression must fallback");
-  require(result.contexts.size() == contexts.size(), "fallback contexts size mismatch");
-  require(result.contexts.front().chunk.doc_id == "doc-1", "fallback context metadata mismatch");
-}
 
 rag::RetrievedChunk makeCandidate(int64_t chunk_id, const std::string& text, float dense_score) {
   rag::RetrievedChunk candidate;
@@ -290,16 +260,6 @@ void testSentenceWindowCrossDocIsolation() {
           "sentence window must not include other documents");
 }
 
-void testCompressedContextDropsInheritedProvenance() {
-  const auto contexts = sampleContexts();
-  const rag::ContextCompressionResult result = rag::buildCompressedContexts("Relevant evidence only.", contexts);
-  const auto& merged = result.contexts.front();
-  require(!merged.has_retrieval_score, "compressed chunk must not claim a retrieval score");
-  require(!merged.has_rerank_score, "compressed chunk must not inherit a rerank score");
-  require(merged.chunk.sentence_begin == -1 && merged.chunk.sentence_end == -1,
-          "compressed chunk must not inherit a sentence range");
-  require(merged.chunk.doc_chunk_index == -1, "compressed chunk must not inherit doc_chunk_index");
-}
 
 void testSentenceWindowDeduplicatesIdenticalWindows() {
   // Two overlapping chunks of the same document that expand to the same window.
@@ -585,6 +545,76 @@ void testTextWithoutReasoningIsUntouched() {
   require(stripped("") == "", "empty stays empty");
 }
 
+
+// LangChain's LLMChainExtractor prompt is reproduced verbatim because the
+// emphasis markers do the work: without *AS IS* and *DO NOT* edit the model
+// summarises, and a summary can assert things the passage never said.
+void testCompressionPromptCarriesTheExtractionContract() {
+  const rag::RetrievedChunk ctx = chunkWithText("d1", "ALDH1 correlated with poor prognosis.");
+  const std::string prompt = rag::buildContextualCompressionPrompt("Is ALDH1 prognostic?", ctx);
+
+  require(prompt.find("*AS IS*") != std::string::npos, "extraction must be demanded verbatim");
+  require(prompt.find("*DO NOT* edit") != std::string::npos, "editing must be forbidden");
+  require(prompt.find(rag::kCompressionNoOutput) != std::string::npos, "NO_OUTPUT must be offered");
+  require(prompt.find("Is ALDH1 prognostic?") != std::string::npos, "question must appear");
+  require(prompt.find(ctx.chunk.text) != std::string::npos, "the passage must appear");
+}
+
+// One document per call. A prompt holding several would be asking the model to
+// synthesise across them, which is a different and harder task.
+void testCompressionPromptHoldsOneDocument() {
+  const rag::RetrievedChunk a = chunkWithText("d1", "FIRST PASSAGE");
+  const rag::RetrievedChunk b = chunkWithText("d2", "SECOND PASSAGE");
+  const std::string prompt = rag::buildContextualCompressionPrompt("q", a);
+
+  require(prompt.find("FIRST PASSAGE") != std::string::npos, "the given passage appears");
+  require(prompt.find("SECOND PASSAGE") == std::string::npos, "no other passage may leak in");
+  (void)b;
+}
+
+// The extract replaces the text and nothing else, so doc_id survives and
+// retrieval metrics stay computable without a provenance side-channel.
+void testCompressionKeepsDocumentIdentity() {
+  rag::RetrievedChunk original = chunkWithText("doc-42", "Long passage with one useful clause and much else.");
+  original.score = 0.87F;
+
+  const auto out = rag::compressSingleContext("one useful clause", original);
+
+  require(!out.dropped && !out.used_fallback, "a normal extract is neither dropped nor a fallback");
+  require(out.context.chunk.doc_id == "doc-42", "doc_id must survive compression");
+  require(out.context.score == 0.87F, "retrieval score must survive compression");
+  require(out.context.chunk.text == "one useful clause", "text is replaced by the extract");
+}
+
+void testCompressionNoOutputDropsTheDocument() {
+  const rag::RetrievedChunk original = chunkWithText("d1", "Irrelevant passage.");
+  const auto out = rag::compressSingleContext("NO_OUTPUT", original);
+
+  require(out.dropped, "NO_OUTPUT must drop the document from the prompt");
+  require(!out.used_fallback, "answering NO_OUTPUT is a correct answer, not a failure");
+}
+
+// Observed on the Pi: gemma-3-270m answered "No_OUTPUT". An exact match filed
+// that token as the extracted evidence and passed it to the generator.
+void testCompressionNoOutputIsCaseInsensitive() {
+  const rag::RetrievedChunk original = chunkWithText("d1", "Irrelevant passage.");
+  for (const char* reply : {"No_OUTPUT", "no_output", " NO_output \n"}) {
+    require(rag::compressSingleContext(reply, original).dropped,
+            "NO_OUTPUT must be recognised whatever the casing");
+  }
+}
+
+// Empty output is the model failing, not the model saying "nothing relevant".
+// Keeping the passage untouched is safer than dropping evidence on a glitch.
+void testCompressionEmptyOutputKeepsTheDocument() {
+  const rag::RetrievedChunk original = chunkWithText("d1", "Original passage.");
+  const auto out = rag::compressSingleContext("   \n  ", original);
+
+  require(out.used_fallback, "empty output is a fallback");
+  require(!out.dropped, "a fallback must not silently discard the passage");
+  require(out.context.chunk.text == "Original passage.", "the original text is kept");
+}
+
 }  // namespace
 
 int main() {
@@ -598,9 +628,6 @@ int main() {
   testHydePrompt();
   testHydeSanitizer();
   testHydeFallback();
-  testCompressionPrompt();
-  testCompressedContext();
-  testCompressionFallback();
   testRerankByLexicalOverlap();
   testRerankZeroTopK();
   testChunkerBuildsSentenceMetadata();
@@ -609,7 +636,6 @@ int main() {
   testSentenceWindowSizeZero();
   testSentenceWindowLegacyFallback();
   testSentenceWindowCrossDocIsolation();
-  testCompressedContextDropsInheritedProvenance();
   testSentenceWindowDeduplicatesIdenticalWindows();
   testSentenceIndexRangeIsScopedToDocument();
   testBasicTokenizerHandlesUtf8();
@@ -636,5 +662,11 @@ int main() {
   testFilledReasoningBlockIsRemoved();
   testUnclosedReasoningBlockLeavesNothing();
   testTextWithoutReasoningIsUntouched();
+  testCompressionPromptCarriesTheExtractionContract();
+  testCompressionPromptHoldsOneDocument();
+  testCompressionKeepsDocumentIdentity();
+  testCompressionNoOutputDropsTheDocument();
+  testCompressionNoOutputIsCaseInsensitive();
+  testCompressionEmptyOutputKeepsTheDocument();
   return 0;
 }
