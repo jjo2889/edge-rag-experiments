@@ -1,6 +1,7 @@
 #include <chrono>
 #include <cstdint>
 #include <fstream>
+#include <sstream>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -332,6 +333,21 @@ int main(int argc, char** argv) {
                    "Re-ingest to generate the sentence store.\n";
     }
 
+    // Loaded up front so a missing or malformed HyDE template fails before any
+    // query runs, rather than after the first eight generations.
+    std::string hyde_prompt_template;
+    if (!retrieval_cfg.prompt.hyde_prompt_path.empty()) {
+      std::ifstream hyde_in(retrieval_cfg.prompt.hyde_prompt_path);
+      if (!hyde_in) {
+        std::cerr << "[query][fail] hyde_prompt_path not readable: "
+                  << retrieval_cfg.prompt.hyde_prompt_path << "\n";
+        return 1;
+      }
+      std::ostringstream hyde_oss;
+      hyde_oss << hyde_in.rdbuf();
+      hyde_prompt_template = hyde_oss.str();
+    }
+
     std::unique_ptr<rag::BgeReranker> bge_reranker;
     const bool run_uses_rerank =
         batch_mode ? cli.beir_export.advanced == rag::AdvancedMode::Rerank
@@ -346,7 +362,9 @@ int main(int argc, char** argv) {
                               retrieval_cfg.rerank_candidate_k,
                               bge_reranker.get(),
                               std::move(sentences),
-                              retrieval_cfg.sentence_window_size);
+                              retrieval_cfg.sentence_window_size,
+                              retrieval_cfg.hyde,
+                              hyde_prompt_template);
     const int64_t model_load_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                                       std::chrono::steady_clock::now() - load_start)
                                       .count();

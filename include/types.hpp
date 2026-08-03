@@ -84,6 +84,11 @@ struct RagResult {
   // "lexical", or "bge". Guards against a rerank run silently using the lexical
   // heuristic while the config claimed a cross-encoder.
   std::string reranker_backend_used;
+  // The hypothetical documents HyDE generated, in draw order. `retrieval_query`
+  // is the plain claim for this mode because the search runs on the mean of
+  // these documents' embeddings and the query's, not on any single string —
+  // without them the trace gives no way to see or reproduce what was searched.
+  std::vector<std::string> hyde_documents;
   std::vector<RetrievedChunk> contexts;
   // Retained for modes that replace `contexts` with passages carrying no
   // retrieval provenance of their own; consumers fall back to `contexts` when

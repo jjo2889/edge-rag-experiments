@@ -13,8 +13,17 @@ reranker:
   sentencepiece_model_path: "models/bge-reranker-base-onnx/sentencepiece.bpe.model"
   max_length: 512
 
+# HyDE 원문(Gao et al. 2212.10496) 기본값. num_documents 8은 Pi에서 쿼리당 생성
+# 8회를 뜻하므로 비용이 크다. 낮춰서 돌린다면 낮춘 값을 논문에 명시해야 한다 —
+# 몰래 1로 두는 것과 "비용 때문에 N=4로 낮췄다"고 밝히는 것은 서술이 정반대다.
+hyde:
+  num_documents: 8
+  temperature: 0.7
+  max_new_tokens: 512
+
 prompt:
   system_prompt_path: "configs/prompt_system_scifact.txt"
+  hyde_prompt_path: "configs/prompt_hyde_scifact.txt"
   context_section: "Evidence"
   context_item_label: "Evidence"
   query_section: "Claim"

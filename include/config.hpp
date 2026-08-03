@@ -46,6 +46,27 @@ struct PromptConfig {
   std::string context_item_label;
   std::string query_section;
   std::string output_section;
+  // HyDE prompts are task-specific in the original work: SciFact asks for a
+  // "scientific paper passage", which aims the hypothetical document at the
+  // region of embedding space where paper abstracts live. A generic "write a
+  // hypothetical document" loses that targeting. The file holds one template
+  // with a {query} placeholder; empty falls back to the built-in generic one.
+  std::string hyde_prompt_path;
+};
+
+// HyDE draws several hypothetical documents and searches with the mean of their
+// embeddings and the query's. The defaults reproduce Gao et al. (arXiv:2212.10496)
+// and its reference implementation: n=8, temperature 0.7, max_tokens 512.
+//
+// The temperature matters as much as the count. This project pins temperature
+// 0.1 with a fixed seed for reproducibility, and under those settings eight
+// draws are identical — the mean would equal a single document and the technique
+// would quietly become N=1. Each draw therefore uses its own seed
+// (base_seed + draw index) so the set stays diverse and still reproducible.
+struct HydeConfig {
+  int num_documents = 8;
+  float temperature = 0.7F;
+  int max_new_tokens = 512;
 };
 
 struct RerankerConfig {
@@ -71,6 +92,7 @@ struct RetrievalConfig {
   int sentence_window_size;
   RerankerConfig reranker;
   PromptConfig prompt;
+  HydeConfig hyde;
 };
 
 class ConfigLoader {

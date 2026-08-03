@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 
 #include "utf8_util.hpp"
@@ -91,6 +92,26 @@ bool isMarkerOnlyLine(const std::string& line) {
 }
 
 }  // namespace
+
+std::string buildHydePromptFromTemplate(const std::string& tmpl, const std::string& query) {
+  if (tmpl.empty()) {
+    return buildHydePrompt(query);
+  }
+
+  static const std::string kPlaceholder = "{query}";
+  std::string out = tmpl;
+  size_t pos = out.find(kPlaceholder);
+  if (pos == std::string::npos) {
+    // A template without the placeholder would send the same prompt for every
+    // claim and every hypothetical document would be identical.
+    throw std::runtime_error("HyDE prompt template must contain {query}.");
+  }
+  while (pos != std::string::npos) {
+    out.replace(pos, kPlaceholder.size(), query);
+    pos = out.find(kPlaceholder, pos + query.size());
+  }
+  return out;
+}
 
 std::string buildHydePrompt(const std::string& query) {
   std::ostringstream oss;

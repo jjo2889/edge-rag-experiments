@@ -222,22 +222,31 @@ void Generator::recreateContextLocked(const int requested_n_batch) const {
 }
 
 GenerationTrace Generator::generateWithTrace(const std::string& prompt_body) const {
-  return generateImpl(prompt_body, system_prompt_, nullptr);
+  return generateImpl(prompt_body, system_prompt_, nullptr, SamplingOverride{});
 }
 
 GenerationTrace Generator::generateWithTrace(const std::string& prompt_body,
                                              const TokenCallback& on_token) const {
-  return generateImpl(prompt_body, system_prompt_, on_token);
+  return generateImpl(prompt_body, system_prompt_, on_token, SamplingOverride{});
 }
 
 GenerationTrace Generator::generateWithSystemPrompt(const std::string& prompt_body,
                                                     const std::string& system_prompt_override) const {
-  return generateImpl(prompt_body, system_prompt_override, nullptr);
+  return generateImpl(prompt_body, system_prompt_override, nullptr, SamplingOverride{});
+}
+
+GenerationTrace Generator::generateWithSystemPrompt(const std::string& prompt_body,
+                                                    const std::string& system_prompt_override,
+                                                    const SamplingOverride& sampling) const {
+  return generateImpl(prompt_body, system_prompt_override, nullptr, sampling);
 }
 
 GenerationTrace Generator::generateImpl(const std::string& prompt_body,
                                         const std::string& system_prompt,
-                                        const TokenCallback& on_token) const {
+                                        const TokenCallback& on_token,
+                                        const SamplingOverride& sampling) const {
+  const float temperature = sampling.temperature >= 0.0F ? sampling.temperature : config_.temperature;
+  const uint32_t seed = config_.seed + sampling.seed_offset;
   if (model_ == nullptr || vocab_ == nullptr) {
     throw std::runtime_error("Generator model is not initialized.");
   }
@@ -266,7 +275,8 @@ GenerationTrace Generator::generateImpl(const std::string& prompt_body,
     throw std::runtime_error("Failed to tokenize prompt into token buffer.");
   }
 
-  const int generation_limit = std::max(1, config_.max_new_tokens);
+  const int generation_limit =
+      std::max(1, sampling.max_new_tokens >= 0 ? sampling.max_new_tokens : config_.max_new_tokens);
   const int max_prompt_tokens = std::max(16, context_limit_ - generation_limit);
   if (static_cast<int>(prompt_tokens.size()) > max_prompt_tokens) {
     trace.prompt_truncated = true;
@@ -307,7 +317,7 @@ GenerationTrace Generator::generateImpl(const std::string& prompt_body,
                                 config_.repetition_penalty_last_n, config_.repetition_penalty, 0.0F, 0.0F));
   }
 
-  if (config_.temperature <= 0.0F) {
+  if (temperature <= 0.0F) {
     llama_sampler_chain_add(sampler.get(), llama_sampler_init_greedy());
   } else {
     if (config_.top_k > 0) {
@@ -316,8 +326,8 @@ GenerationTrace Generator::generateImpl(const std::string& prompt_body,
     if (config_.top_p > 0.0F && config_.top_p <= 1.0F) {
       llama_sampler_chain_add(sampler.get(), llama_sampler_init_top_p(config_.top_p, 1));
     }
-    llama_sampler_chain_add(sampler.get(), llama_sampler_init_temp(config_.temperature));
-    llama_sampler_chain_add(sampler.get(), llama_sampler_init_dist(config_.seed));
+    llama_sampler_chain_add(sampler.get(), llama_sampler_init_temp(temperature));
+    llama_sampler_chain_add(sampler.get(), llama_sampler_init_dist(seed));
   }
 
   std::lock_guard<std::mutex> lock(ctx_mutex_);

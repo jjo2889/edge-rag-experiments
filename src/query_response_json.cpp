@@ -177,6 +177,8 @@ nlohmann::json buildTraceJson(const RagResult& result, const double memory_mb, c
   trace["transform_used_fallback"] = result.transform_used_fallback;
   trace["technique_effect"] = techniqueEffectToString(result.technique_effect);
   trace["context_source"] = contextSourceToString(result.context_source);
+  trace["hyde_documents"] = result.hyde_documents;
+  trace["hyde_document_count"] = static_cast<int>(result.hyde_documents.size());
   trace["reranker_backend_used"] =
       result.reranker_backend_used.empty() ? nlohmann::json(nullptr)
                                            : nlohmann::json(result.reranker_backend_used);

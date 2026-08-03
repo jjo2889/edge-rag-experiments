@@ -1,5 +1,6 @@
 #include "config.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 
 #include <yaml-cpp/yaml.h>
@@ -42,6 +43,7 @@ PromptConfig readPromptConfig(const YAML::Node& node) {
 
   PromptConfig cfg;
   cfg.system_prompt_path = readRequired<std::string>(node, "system_prompt_path");
+  cfg.hyde_prompt_path = readOptional<std::string>(node, "hyde_prompt_path", "");
   cfg.context_section = readRequired<std::string>(node, "context_section");
   cfg.context_item_label = readRequired<std::string>(node, "context_item_label");
   cfg.query_section = readRequired<std::string>(node, "query_section");
@@ -125,6 +127,12 @@ RetrievalConfig ConfigLoader::loadRetrievalConfig(const std::string& path) {
   }
   cfg.top_k = readRequired<int>(root, "top_k");
   cfg.rerank_candidate_k = readOptional<int>(root, "rerank_candidate_k", cfg.top_k * 3);
+  if (root["hyde"]) {
+    const YAML::Node& hyde = root["hyde"];
+    cfg.hyde.num_documents = std::max(1, readOptional<int>(hyde, "num_documents", cfg.hyde.num_documents));
+    cfg.hyde.temperature = readOptional<float>(hyde, "temperature", cfg.hyde.temperature);
+    cfg.hyde.max_new_tokens = std::max(1, readOptional<int>(hyde, "max_new_tokens", cfg.hyde.max_new_tokens));
+  }
   cfg.sentence_window_size = readOptional<int>(root, "sentence_window_size", 1);
   if (cfg.sentence_window_size < 0) {
     throw std::runtime_error("sentence_window_size must be >= 0.");

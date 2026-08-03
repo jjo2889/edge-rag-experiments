@@ -14,6 +14,7 @@
 #include "reranker.hpp"
 #include "sentence_window.hpp"
 #include "context_source.hpp"
+#include "hyde_transformer.hpp"
 #include "reasoning_output.hpp"
 #include "technique_effect.hpp"
 #include "text_chunker.hpp"
@@ -615,6 +616,36 @@ void testCompressionEmptyOutputKeepsTheDocument() {
   require(out.context.chunk.text == "Original passage.", "the original text is kept");
 }
 
+
+// HyDE's prompts name the document genre per dataset — SciFact asks for a
+// "scientific paper passage" — which is what aims the hypothetical document at
+// the part of the embedding space where paper abstracts live.
+void testHydeTemplateSubstitutesTheClaim() {
+  const std::string tmpl = "Please write a scientific paper passage to support/refute the claim.\nClaim: {query}\nPassage:";
+  const std::string out = rag::buildHydePromptFromTemplate(tmpl, "ALDH1 is prognostic.");
+
+  require(out.find("ALDH1 is prognostic.") != std::string::npos, "the claim must be substituted in");
+  require(out.find("{query}") == std::string::npos, "no placeholder may survive");
+  require(out.find("scientific paper passage") != std::string::npos, "the genre instruction must survive");
+}
+
+// A template with no placeholder would send an identical prompt for every claim,
+// so all eight draws would describe the same nonexistent paper.
+void testHydeTemplateWithoutPlaceholderIsRejected() {
+  bool threw = false;
+  try {
+    (void)rag::buildHydePromptFromTemplate("Write a passage.", "any claim");
+  } catch (const std::runtime_error&) {
+    threw = true;
+  }
+  require(threw, "a template missing {query} must be rejected");
+}
+
+void testHydeEmptyTemplateFallsBackToGeneric() {
+  const std::string out = rag::buildHydePromptFromTemplate("", "some claim");
+  require(out == rag::buildHydePrompt("some claim"), "an empty template uses the built-in prompt");
+}
+
 }  // namespace
 
 int main() {
@@ -668,5 +699,8 @@ int main() {
   testCompressionNoOutputDropsTheDocument();
   testCompressionNoOutputIsCaseInsensitive();
   testCompressionEmptyOutputKeepsTheDocument();
+  testHydeTemplateSubstitutesTheClaim();
+  testHydeTemplateWithoutPlaceholderIsRejected();
+  testHydeEmptyTemplateFallsBackToGeneric();
   return 0;
 }

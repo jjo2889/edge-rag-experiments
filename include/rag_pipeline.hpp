@@ -7,6 +7,7 @@
 #include "advanced_mode.hpp"
 #include "generator.hpp"
 #include "prompt_builder.hpp"
+#include "config.hpp"
 #include "context_source.hpp"
 #include "retriever.hpp"
 #include "sentence_window.hpp"
@@ -30,7 +31,9 @@ class RagPipeline {
               int rerank_candidate_k,
               const BgeReranker* bge_reranker = nullptr,
               std::vector<DocumentSentence> sentences = {},
-              int sentence_window_size = 1);
+              int sentence_window_size = 1,
+              HydeConfig hyde = {},
+              std::string hyde_prompt_template = "");
 
   // on_token, when set, streams the final answer generation token-by-token.
   // Advanced-mode transform generations (HyDE, query rewrite, etc.) are never
@@ -53,6 +56,8 @@ class RagPipeline {
   int top_k_;
   int rerank_candidate_k_;
   int sentence_window_size_;
+  HydeConfig hyde_;
+  std::string hyde_prompt_template_;
   // Owns the sentence store; sentence_index_ points into it, so the vector must
   // outlive the index and must not be reallocated after construction.
   std::vector<DocumentSentence> sentences_;

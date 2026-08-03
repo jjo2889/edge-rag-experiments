@@ -17,8 +17,23 @@ std::vector<RetrievedChunk> Retriever::retrieve(const std::string& query, const 
     return {};
   }
 
-  const std::vector<float> qvec = embedding_model_->embed(query);
-  const auto hits = index_.search(qvec, top_k);
+  return retrieveByVector(embedding_model_->embed(query), top_k);
+}
+
+std::vector<float> Retriever::embed(const std::string& text) const {
+  if (!embedding_model_) {
+    throw std::runtime_error("Retriever has no embedding model.");
+  }
+  return embedding_model_->embed(text);
+}
+
+std::vector<RetrievedChunk> Retriever::retrieveByVector(const std::vector<float>& embedding,
+                                                        const int top_k) const {
+  if (top_k <= 0 || embedding.empty()) {
+    return {};
+  }
+
+  const auto hits = index_.search(embedding, top_k);
 
   std::vector<RetrievedChunk> out;
   out.reserve(hits.size());

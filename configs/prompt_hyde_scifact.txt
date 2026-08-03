@@ -1,0 +1,3 @@
+Please write a scientific paper passage to support/refute the claim.
+Claim: {query}
+Passage:

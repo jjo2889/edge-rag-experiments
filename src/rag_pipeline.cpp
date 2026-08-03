@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <stdexcept>
 #include <utility>
 
 #include "advanced_query_transformer.hpp"
@@ -14,6 +15,34 @@
 
 namespace rag {
 
+namespace {
+
+// Mean of the query embedding and each hypothetical document's, matching
+// `np.mean([query] + hypothesis_documents)` in the reference implementation.
+// The query is one contributor among N+1, not a weighted anchor.
+std::vector<float> meanEmbedding(const Retriever& retriever,
+                                 const std::string& query,
+                                 const std::vector<std::string>& documents) {
+  std::vector<float> sum = retriever.embed(query);
+  for (const auto& document : documents) {
+    const std::vector<float> vec = retriever.embed(document);
+    if (vec.size() != sum.size()) {
+      throw std::runtime_error("HyDE embedding dimension mismatch.");
+    }
+    for (size_t i = 0; i < sum.size(); ++i) {
+      sum[i] += vec[i];
+    }
+  }
+
+  const float divisor = static_cast<float>(documents.size() + 1);
+  for (float& value : sum) {
+    value /= divisor;
+  }
+  return sum;
+}
+
+}  // namespace
+
 RagPipeline::RagPipeline(const Retriever& retriever,
                          const PromptBuilder& prompt_builder,
                          const Generator& generator,
@@ -21,7 +50,9 @@ RagPipeline::RagPipeline(const Retriever& retriever,
                          const int rerank_candidate_k,
                          const BgeReranker* bge_reranker,
                          std::vector<DocumentSentence> sentences,
-                         const int sentence_window_size)
+                         const int sentence_window_size,
+                         HydeConfig hyde,
+                         std::string hyde_prompt_template)
     : retriever_(&retriever),
       prompt_builder_(&prompt_builder),
       generator_(&generator),
@@ -29,6 +60,8 @@ RagPipeline::RagPipeline(const Retriever& retriever,
       top_k_(std::max(1, top_k)),
       rerank_candidate_k_(std::max(std::max(1, top_k), rerank_candidate_k)),
       sentence_window_size_(std::max(0, sentence_window_size)),
+      hyde_(hyde),
+      hyde_prompt_template_(std::move(hyde_prompt_template)),
       sentences_(std::move(sentences)),
       // Built once here rather than per query: a per-call scan of the whole
       // sentence store made context_transform_ms measure the scan, not the mode.
@@ -50,6 +83,7 @@ RagResult RagPipeline::run(const std::string& query,
   std::string retrieval_query = query;
   bool transform_used_fallback = false;
   TechniqueEffect technique_effect = TechniqueEffect::NotApplicable;
+  std::vector<std::string> hyde_documents;
   int aux_prompt_tokens = 0;
   int aux_output_tokens = 0;
   // Auxiliary generations pass an empty system prompt so they don't inherit the
@@ -65,24 +99,52 @@ RagResult RagPipeline::run(const std::string& query,
     aux_prompt_tokens += rewrite_trace.prompt_tokens;
     aux_output_tokens += rewrite_trace.output_tokens;
   } else if (retrieval_active && advanced == AdvancedMode::Hyde) {
-    const GenerationTrace hyde_trace =
-        generator_->generateWithSystemPrompt(buildHydePrompt(query), "");
-    const HydeTransformResult hyde = sanitizeHydeDocument(hyde_trace.output_text, query);
-    retrieval_query = hyde.document;
-    transform_used_fallback = hyde.used_fallback;
-    // A HyDE document that is just the claim restated retrieves exactly what
-    // advanced=none would, so it is a no-op however plausible it reads.
-    technique_effect = classifyTextTransform(hyde.used_fallback, query, hyde.document);
-    aux_prompt_tokens += hyde_trace.prompt_tokens;
-    aux_output_tokens += hyde_trace.output_tokens;
+    // Gao et al. draw several hypothetical documents and search with the mean of
+    // their embeddings and the query's. Replacing the query with one document —
+    // what this used to do — drops the anchor that keeps the search vector near
+    // the question when a draw goes wrong.
+    const std::string hyde_prompt = buildHydePromptFromTemplate(hyde_prompt_template_, query);
+    std::vector<std::string> documents;
+    documents.reserve(static_cast<size_t>(hyde_.num_documents));
+
+    for (int draw = 0; draw < hyde_.num_documents; ++draw) {
+      Generator::SamplingOverride sampling;
+      sampling.temperature = hyde_.temperature;
+      // Each draw offsets the configured seed. Without this every draw would be
+      // byte-identical and the mean would collapse to N=1; replacing the seed
+      // instead of offsetting it would ignore model.yaml entirely.
+      sampling.seed_offset = static_cast<uint32_t>(draw);
+      sampling.max_new_tokens = hyde_.max_new_tokens;
+
+      const GenerationTrace hyde_trace =
+          generator_->generateWithSystemPrompt(hyde_prompt, "", sampling);
+      aux_prompt_tokens += hyde_trace.prompt_tokens;
+      aux_output_tokens += hyde_trace.output_tokens;
+
+      const HydeTransformResult hyde = sanitizeHydeDocument(hyde_trace.output_text, query);
+      if (!hyde.used_fallback) {
+        documents.push_back(hyde.document);
+      }
+    }
+
+    hyde_documents = documents;
+    // Every draw unusable means there is nothing to average, so the plain query
+    // embedding is used — the same search advanced=none performs.
+    transform_used_fallback = documents.empty();
+    technique_effect = documents.empty() ? TechniqueEffect::Fallback : TechniqueEffect::Applied;
   }
+
   const auto query_transform_end = std::chrono::steady_clock::now();
 
   const auto retrieve_start = std::chrono::steady_clock::now();
   std::vector<RetrievedChunk> contexts;
   if (retrieval_active) {
     const int retrieve_k = advanced == AdvancedMode::Rerank ? rerank_candidate_k_ : top_k_;
-    contexts = retriever_->retrieve(retrieval_query, retrieve_k);
+    if (!hyde_documents.empty()) {
+      contexts = retriever_->retrieveByVector(meanEmbedding(*retriever_, query, hyde_documents), retrieve_k);
+    } else {
+      contexts = retriever_->retrieve(retrieval_query, retrieve_k);
+    }
   } else if (context_override.source == ContextSource::Oracle) {
     contexts.reserve(context_override.oracle_contexts.size());
     for (const auto& oracle : context_override.oracle_contexts) {
@@ -210,6 +272,7 @@ RagResult RagPipeline::run(const std::string& query,
   result.transform_used_fallback = transform_used_fallback;
   result.technique_effect = technique_effect;
   result.reranker_backend_used = reranker_backend_used;
+  result.hyde_documents = std::move(hyde_documents);
   result.contexts = contexts;
   result.pre_transform_contexts = std::move(pre_transform_contexts);
   return result;

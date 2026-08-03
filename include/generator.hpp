@@ -45,10 +45,30 @@ class Generator {
   GenerationTrace generateWithSystemPrompt(const std::string& prompt_body,
                                            const std::string& system_prompt_override) const;
 
+  // Per-call sampling overrides. HyDE needs them: the paper draws 8 hypothetical
+  // documents at temperature 0.7 and averages their embeddings, which only works
+  // if the draws differ. Under this project's pinned temperature 0.1 / seed 42
+  // the eight draws would be identical and the average would equal one document,
+  // silently reducing the technique to N=1.
+  struct SamplingOverride {
+    float temperature = -1.0F;  // < 0 keeps the configured value
+    // Added to the configured seed rather than replacing it, so the project's
+    // pinned seed still governs the run and only the draws within one query
+    // differ. Replacing it outright would make every run identical regardless
+    // of the seed in model.yaml.
+    uint32_t seed_offset = 0;
+    int max_new_tokens = -1;  // < 0 keeps the configured value
+  };
+
+  GenerationTrace generateWithSystemPrompt(const std::string& prompt_body,
+                                           const std::string& system_prompt_override,
+                                           const SamplingOverride& sampling) const;
+
  private:
   GenerationTrace generateImpl(const std::string& prompt_body,
                                const std::string& system_prompt,
-                               const TokenCallback& on_token) const;
+                               const TokenCallback& on_token,
+                               const SamplingOverride& sampling) const;
   std::string buildFinalPrompt(const std::string& prompt_body,
                                const std::string& system_prompt) const;
   std::string buildChatPrompt(const std::string& prompt_body,
