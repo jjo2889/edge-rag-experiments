@@ -1,0 +1,38 @@
+# NQ retrieval config with the BGE cross-encoder reranker enabled.
+#
+# Identical to configs/retrieval_nq.yaml except for rerank_candidate_k and the
+# reranker block, both of which only take effect when advanced=rerank — so the
+# other five modes behave exactly as they do under the plain NQ config, and the
+# same index serves both.
+#
+# This mirrors configs/retrieval_scifact_bge_rerank.yaml. Without it, an
+# advanced=rerank run on NQ falls back to lexical overlap (see
+# CODE_REVIEW_FIXES.md P0-3); the fallback is now recorded in
+# trace.reranker_backend_used rather than being silent, but it is still not the
+# cross-encoder the paper reports.
+data_dir: "data/beir/nq_corpus"
+index_path: "data/indexes/nq/faiss.index"
+chunk_store_path: "data/indexes/nq/chunks.jsonl"
+
+chunk_size: 256
+chunk_overlap: 32
+top_k: 3
+rerank_candidate_k: 9
+
+# Sentences kept on each side of the representative sentence for
+# advanced=sentence_window. Kept at the SciFact value so the two datasets differ
+# only in data, not in technique configuration.
+sentence_window_size: 1
+
+reranker:
+  backend: "bge"
+  model_path: "models/bge-reranker-base-onnx/model.onnx"
+  sentencepiece_model_path: "models/bge-reranker-base-onnx/sentencepiece.bpe.model"
+  max_length: 512
+
+prompt:
+  system_prompt_path: "configs/prompt_system_nq.txt"
+  context_section: "Passages"
+  context_item_label: "Passage"
+  query_section: "Question"
+  output_section: "Answer"

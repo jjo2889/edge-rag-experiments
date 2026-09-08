@@ -1,5 +1,7 @@
+#include <chrono>
 #include <cstdint>
 #include <fstream>
+#include <sstream>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -35,6 +37,8 @@ struct QueryCliOptions {
   rag::AdvancedMode advanced = rag::AdvancedMode::None;
   bool question_provided = false;
   bool advanced_provided = false;
+  bool limit_provided = false;
+  bool stream = false;
   bool show_help = false;
 };
 
@@ -164,6 +168,9 @@ QueryCliOptions parseQueryCliOptions(int argc, char** argv) {
         throw std::runtime_error("Missing value for --limit");
       }
       options.beir_export.limit = std::stoi(argv[++i]);
+      options.limit_provided = true;
+    } else if (arg == "--stream") {
+      options.stream = true;
     } else if (arg == "--help" || arg == "-h") {
       options.show_help = true;
       return options;
@@ -192,6 +199,15 @@ void validateQueryCliOptions(const QueryCliOptions& options) {
     if (options.question_provided || !options.request_json_path.empty()) {
       throw std::runtime_error("Batch JSONL mode cannot be combined with --question or --request_json.");
     }
+    // Streaming emits SSE frames for one answer; there is no meaningful way to
+    // stream a batch export, and accepting the flag silently produced a run whose
+    // stdout was neither a batch result nor a stream.
+    if (options.stream) {
+      throw std::runtime_error("--stream is not supported in batch JSONL mode.");
+    }
+    if (options.beir_export.limit == 0) {
+      throw std::runtime_error("--limit must be non-zero (use a positive count, or omit for all rows).");
+    }
     return;
   }
 
@@ -202,6 +218,11 @@ void validateQueryCliOptions(const QueryCliOptions& options) {
         "Batch JSONL options require --output_jsonl and cannot be used with single query mode.");
   }
 
+  // --limit only bounds a batch export; in single-query mode it silently did
+  // nothing, so a caller who passed it got a different run than they asked for.
+  if (options.limit_provided) {
+    throw std::runtime_error("--limit only applies to batch JSONL mode (requires --output_jsonl).");
+  }
   if (options.question_provided && !options.request_json_path.empty()) {
     throw std::runtime_error("Use either --question or --request_json, not both.");
   }
@@ -234,6 +255,7 @@ int main(int argc, char** argv) {
   std::optional<rag::query::QueryRequest> request_for_error;
   std::string error_mode = "naive_rag";
   std::string output_jsonl_for_error;
+  bool stream_for_error = false;
 
   try {
     const QueryCliOptions cli = parseQueryCliOptions(argc, argv);
@@ -241,6 +263,7 @@ int main(int argc, char** argv) {
       printUsage();
       return 0;
     }
+    stream_for_error = cli.stream;
     const bool batch_mode = isBatchJsonlMode(cli);
     if (batch_mode) {
       error_mode = "batch_export_jsonl";
@@ -270,15 +293,61 @@ int main(int argc, char** argv) {
       rag::query::validateRequest(*request_for_error);
     }
 
+    // Startup cost of everything a query needs before the pipeline can run:
+    // chunk/sentence stores, FAISS index, ONNX embedding model, GGUF generator,
+    // and (for rerank) the BGE cross-encoder. The HTTP server execs a fresh
+    // rag_query per request, so served queries pay this on every call — report
+    // it as trace.latency_ms.model_load instead of losing it (P1-9).
+    const auto load_start = std::chrono::steady_clock::now();
     std::vector<rag::Chunk> chunks = loadChunkStore(retrieval_cfg.chunk_store_path);
     std::vector<rag::DocumentSentence> sentences =
         loadSentenceStoreIfExists(buildSentenceStorePath(retrieval_cfg.chunk_store_path));
     rag::FaissIndex index = rag::FaissIndex::load(retrieval_cfg.index_path);
 
+    // Guard against a stale index paired with a rebuilt chunk store (or vice
+    // versa): FAISS ids map positionally into `chunks`, so a size mismatch means
+    // every retrieval returns text belonging to different vectors than were
+    // searched — silent corruption of every downstream number.
+    if (index.size() != static_cast<int64_t>(chunks.size())) {
+      throw std::runtime_error(
+          "Index/chunk store size mismatch: index has " + std::to_string(index.size()) +
+          " vectors but chunk store has " + std::to_string(chunks.size()) +
+          " chunks. Re-ingest so index_path and chunk_store_path are consistent.");
+    }
+
     rag::EmbeddingModel embedding_model(model_cfg.onnx_model_path, model_cfg.tokenizer_json_path);
     rag::Retriever retriever(embedding_model, std::move(index), std::move(chunks));
     rag::PromptBuilder prompt_builder(retrieval_cfg.prompt);
     rag::Generator generator(model_cfg);
+    // Guard: sentence_window silently degrades to a no-op (raw chunks) when the
+    // sentence store is missing/empty, e.g. an index built before sentence
+    // metadata existed. Surface it loudly so a stale index isn't mistaken for a
+    // null result for the technique. Re-ingest to generate the sentence store.
+    const bool run_uses_sentence_window =
+        batch_mode ? cli.beir_export.advanced == rag::AdvancedMode::SentenceWindow
+                   : request_for_error && request_for_error->advanced == rag::AdvancedMode::SentenceWindow;
+    if (run_uses_sentence_window && sentences.empty()) {
+      std::cerr << "[query][warn] advanced=sentence_window but no sentence metadata at "
+                << buildSentenceStorePath(retrieval_cfg.chunk_store_path)
+                << "; windows will NOT be applied (contexts fall back to raw chunks). "
+                   "Re-ingest to generate the sentence store.\n";
+    }
+
+    // Loaded up front so a missing or malformed HyDE template fails before any
+    // query runs, rather than after the first eight generations.
+    std::string hyde_prompt_template;
+    if (!retrieval_cfg.prompt.hyde_prompt_path.empty()) {
+      std::ifstream hyde_in(retrieval_cfg.prompt.hyde_prompt_path);
+      if (!hyde_in) {
+        std::cerr << "[query][fail] hyde_prompt_path not readable: "
+                  << retrieval_cfg.prompt.hyde_prompt_path << "\n";
+        return 1;
+      }
+      std::ostringstream hyde_oss;
+      hyde_oss << hyde_in.rdbuf();
+      hyde_prompt_template = hyde_oss.str();
+    }
+
     std::unique_ptr<rag::BgeReranker> bge_reranker;
     const bool run_uses_rerank =
         batch_mode ? cli.beir_export.advanced == rag::AdvancedMode::Rerank
@@ -292,7 +361,14 @@ int main(int argc, char** argv) {
                               retrieval_cfg.top_k,
                               retrieval_cfg.rerank_candidate_k,
                               bge_reranker.get(),
-                              std::move(sentences));
+                              std::move(sentences),
+                              retrieval_cfg.sentence_window_size,
+                              retrieval_cfg.hyde,
+                              hyde_prompt_template);
+    const int64_t model_load_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - load_start)
+                                      .count();
+    std::cerr << "[trace] model_load_ms=" << model_load_ms << '\n';
 
     if (batch_mode) {
       const size_t rows_written =
@@ -301,7 +377,8 @@ int main(int argc, char** argv) {
                                           retrieval_cfg,
                                           cli.beir_export,
                                           cli.common.model_config_path,
-                                          cli.common.retrieval_config_path);
+                                          cli.common.retrieval_config_path,
+                                          model_load_ms);
       nlohmann::json batch_result;
       batch_result["mode"] = "batch_export_jsonl";
       batch_result["status"] = "ok";
@@ -315,7 +392,22 @@ int main(int argc, char** argv) {
       return 0;
     }
 
-    const rag::RagResult result = pipeline.run(request_for_error->question, request_for_error->advanced);
+    rag::RagPipeline::TokenCallback on_token = nullptr;
+    if (cli.stream) {
+      on_token = [](const std::string& piece) {
+        std::cout << "data: "
+                  << rag::query::dumpSafe(nlohmann::json{{"event", "token"}, {"token", piece}})
+                  << "\n\n"
+                  << std::flush;
+      };
+    }
+
+    const rag::RagResult result =
+        pipeline.run(request_for_error->question,
+                     request_for_error->advanced,
+                     on_token,
+                     rag::ContextOverride{request_for_error->context_source,
+                                          request_for_error->oracle_contexts});
     const double memory_mb = rag::query::getResidentMemoryMb();
 
     const nlohmann::json output = rag::query::buildSingleRunSuccessJson(*request_for_error,
@@ -324,15 +416,32 @@ int main(int argc, char** argv) {
                                                                          retrieval_cfg,
                                                                          cli.common.model_config_path,
                                                                          cli.common.retrieval_config_path,
-                                                                         memory_mb);
-    std::cout << output.dump() << '\n';
+                                                                         memory_mb,
+                                                                         model_load_ms);
+    if (cli.stream) {
+      std::cout << "data: "
+                << rag::query::dumpSafe(nlohmann::json{{"event", "done"}, {"result", output}}) << "\n\n";
+      std::cout << "data: [DONE]\n\n" << std::flush;
+    } else {
+      std::cout << rag::query::dumpSafe(output) << '\n';
+    }
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[query][error] " << e.what() << '\n';
-    if (error_mode == "batch_export_jsonl") {
-      std::cout << buildBatchExportErrorJson(output_jsonl_for_error, e.what()).dump() << '\n';
+    const bool batch_error = error_mode == "batch_export_jsonl";
+    const nlohmann::json error_json =
+        batch_error ? buildBatchExportErrorJson(output_jsonl_for_error, e.what())
+                    : rag::query::buildSingleRunErrorJson(request_for_error, e.what());
+    // Batch mode never streams (validation rejects --stream), so a batch error
+    // must not be wrapped in SSE frames — otherwise the "--stream is not
+    // supported" error is itself delivered as a stream.
+    if (stream_for_error && !batch_error) {
+      std::cout << "data: "
+                << rag::query::dumpSafe(nlohmann::json{{"event", "error"}, {"result", error_json}})
+                << "\n\n";
+      std::cout << "data: [DONE]\n\n" << std::flush;
     } else {
-      std::cout << rag::query::buildSingleRunErrorJson(request_for_error, e.what()).dump() << '\n';
+      std::cout << rag::query::dumpSafe(error_json) << '\n';
     }
     return 1;
   }

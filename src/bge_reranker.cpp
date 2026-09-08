@@ -138,7 +138,12 @@ struct BgeReranker::Impl {
       } else if (name == "token_type_ids") {
         input_tensors.push_back(createTensor(token_type_ids));
       } else {
-        input_tensors.push_back(createTensor(token_type_ids));
+        // Feeding token_type_ids to an input we do not recognise runs fine and
+        // returns quietly wrong scores, which would make rerank look like a
+        // technique that does nothing. Swapping the ONNX file for one with a
+        // different signature must fail at the first query, not silently
+        // randomise the ranking.
+        throw std::runtime_error("Unexpected reranker ONNX input: " + name);
       }
     }
 

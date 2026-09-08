@@ -13,6 +13,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "bert_basic_tokenizer.hpp"
+
 namespace rag {
 
 class BertWordPieceTokenizer {
@@ -32,10 +34,13 @@ class BertWordPieceTokenizer {
       vocab_[it.key()] = it.value().get<int64_t>();
     }
 
-    unk_id_ = findTokenId("[UNK]", 100);
-    cls_id_ = findTokenId("[CLS]", 101);
-    sep_id_ = findTokenId("[SEP]", 102);
-    pad_id_ = findTokenId("[PAD]", 0);
+    // Hard-coded BERT ids used to be the fallback here. If a tokenizer.json ever
+    // used a different vocabulary layout, those ids would silently point at
+    // unrelated tokens and quietly poison every embedding — fail loudly instead.
+    unk_id_ = requireTokenId("[UNK]", tokenizer_json_path);
+    cls_id_ = requireTokenId("[CLS]", tokenizer_json_path);
+    sep_id_ = requireTokenId("[SEP]", tokenizer_json_path);
+    pad_id_ = requireTokenId("[PAD]", tokenizer_json_path);
 
     if (model.contains("continuing_subword_prefix") && model["continuing_subword_prefix"].is_string()) {
       continuation_prefix_ = model["continuing_subword_prefix"].get<std::string>();
@@ -80,45 +85,17 @@ class BertWordPieceTokenizer {
   }
 
  private:
-  int64_t findTokenId(const std::string& token, const int64_t fallback) const {
+  int64_t requireTokenId(const std::string& token, const std::string& tokenizer_json_path) const {
     const auto it = vocab_.find(token);
-    return it == vocab_.end() ? fallback : it->second;
+    if (it == vocab_.end()) {
+      throw std::runtime_error("Tokenizer vocab is missing required special token " + token + " in " +
+                               tokenizer_json_path);
+    }
+    return it->second;
   }
 
   std::vector<std::string> basicTokenize(const std::string& text) const {
-    std::vector<std::string> tokens;
-    std::string current;
-
-    auto flush_current = [&]() {
-      if (!current.empty()) {
-        tokens.push_back(current);
-        current.clear();
-      }
-    };
-
-    for (char raw_ch : text) {
-      unsigned char uch = static_cast<unsigned char>(raw_ch);
-      if (std::isspace(uch) != 0) {
-        flush_current();
-        continue;
-      }
-
-      char ch = raw_ch;
-      if (do_lower_case_) {
-        ch = static_cast<char>(std::tolower(uch));
-        uch = static_cast<unsigned char>(ch);
-      }
-
-      if (std::isalnum(uch) != 0) {
-        current.push_back(ch);
-      } else {
-        flush_current();
-        tokens.emplace_back(1, ch);
-      }
-    }
-    flush_current();
-
-    return tokens;
+    return bertBasicTokenize(text, do_lower_case_);
   }
 
   std::vector<int64_t> wordpieceTokenize(const std::string& token) const {
@@ -126,7 +103,8 @@ class BertWordPieceTokenizer {
       return {};
     }
 
-    if (static_cast<int>(token.size()) > max_input_chars_per_word_) {
+    // max_input_chars_per_word counts characters, not bytes.
+    if (static_cast<int>(utf8Length(token)) > max_input_chars_per_word_) {
       return {unk_id_};
     }
 

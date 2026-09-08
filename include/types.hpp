@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "advanced_mode.hpp"
+#include "context_source.hpp"
 
 namespace rag {
 
@@ -35,10 +36,19 @@ struct RetrievedChunk {
   float score = 0.0F;
   float rerank_score = 0.0F;
   bool has_rerank_score = false;
+  // False for chunks that are not a retrieved passage — currently only the
+  // merged chunk produced by contextual_compression, which has no retrieval
+  // score and no document of its own. Serialization emits null instead of an
+  // inherited score for these.
+  bool has_retrieval_score = true;
 };
 
 struct RagResult {
   AdvancedMode advanced_mode = AdvancedMode::None;
+  // Which baseline this row belongs to. Mixing closed_book or oracle rows into
+  // a retrieved run's mean would compare a technique against a different
+  // experiment.
+  ContextSource context_source = ContextSource::Retrieved;
   std::string original_query;
   std::string retrieval_query;
   std::string prompt_body;
@@ -48,6 +58,11 @@ struct RagResult {
   int prompt_tokens_before_truncation = 0;
   int prompt_tokens = 0;
   int output_tokens = 0;
+  // Tokens spent on auxiliary LLM calls (query_rewrite / hyde /
+  // contextual_compression). These are real on-device work; leaving them out of
+  // the accounting understated those modes' token cost, throughput, and energy.
+  int aux_prompt_tokens = 0;
+  int aux_output_tokens = 0;
   bool prompt_truncated = false;
   int64_t query_transform_ms = 0;
   int64_t retrieve_ms = 0;
@@ -57,6 +72,24 @@ struct RagResult {
   int64_t generate_ms = 0;
   int64_t total_ms = 0;
   double output_tokens_per_sec = 0.0;
+  // True when an advanced transform (query_rewrite / hyde / contextual_compression)
+  // produced empty/unusable output and the pipeline silently reverted to the
+  // original query / uncompressed contexts. Lets analysis separate genuine
+  // transforms from fallbacks that were averaged into a mode's results.
+  bool transform_used_fallback = false;
+  // Whether this mode's transform changed anything — see TechniqueEffect. A
+  // mode whose effect is NoOp produced the same result as advanced=none, so
+  // averaging it into that mode's score reports the baseline as the technique.
+  TechniqueEffect technique_effect = TechniqueEffect::NotApplicable;
+  // Which reranker actually ran for advanced=rerank: "" (not a rerank run),
+  // "lexical", or "bge". Guards against a rerank run silently using the lexical
+  // heuristic while the config claimed a cross-encoder.
+  std::string reranker_backend_used;
+  // The hypothetical documents HyDE generated, in draw order. `retrieval_query`
+  // is the plain claim for this mode because the search runs on the mean of
+  // these documents' embeddings and the query's, not on any single string —
+  // without them the trace gives no way to see or reproduce what was searched.
+  std::vector<std::string> hyde_documents;
   std::vector<RetrievedChunk> contexts;
   // Set only when advanced_mode == Rerank: "bge" or "lexical" depending on which
   // backend RagPipeline::run() actually used. std::nullopt for every other mode.

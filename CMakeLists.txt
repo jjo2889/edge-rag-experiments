@@ -74,12 +74,16 @@ find_library(LLAMA_LIBRARY
 
 set(RAG_CORE_SOURCES
   src/advanced_mode.cpp
+  src/technique_effect.cpp
+  src/context_source.cpp
+  src/reasoning_output.cpp
   src/advanced_query_transformer.cpp
   src/hyde_transformer.cpp
   src/contextual_compressor.cpp
   src/config.cpp
   src/document_loader.cpp
   src/text_chunker.cpp
+  src/bert_basic_tokenizer.cpp
   src/embedding_model.cpp
   src/faiss_index.cpp
   src/retriever.cpp
@@ -153,11 +157,15 @@ if(BUILD_RAG_TESTS)
   add_executable(rag_contract_tests
     tests/advanced_contract_test.cpp
     src/advanced_mode.cpp
+    src/technique_effect.cpp
+  src/context_source.cpp
+  src/reasoning_output.cpp
     src/advanced_query_transformer.cpp
     src/hyde_transformer.cpp
     src/contextual_compressor.cpp
     src/sentence_window.cpp
     src/text_chunker.cpp
+    src/bert_basic_tokenizer.cpp
     src/query_request_io.cpp
     src/reranker.cpp)
   target_include_directories(rag_contract_tests PRIVATE

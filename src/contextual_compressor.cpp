@@ -6,6 +6,8 @@
 #include <string>
 #include <utility>
 
+#include "utf8_util.hpp"
+
 namespace rag {
 
 namespace {
@@ -28,47 +30,62 @@ std::string trim(const std::string& text) {
 
 }  // namespace
 
-std::string buildContextualCompressionPrompt(const std::string& query, const std::vector<RetrievedChunk>& contexts) {
+namespace {
+
+bool containsIgnoreCase(const std::string& haystack, const std::string& needle) {
+  const auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end(),
+                              [](const unsigned char a, const unsigned char b) {
+                                return std::tolower(a) == std::tolower(b);
+                              });
+  return it != haystack.end();
+}
+
+}  // namespace
+
+const char* const kCompressionNoOutput = "NO_OUTPUT";
+
+std::string buildContextualCompressionPrompt(const std::string& query, const RetrievedChunk& context) {
+  // Wording follows LangChain's LLMChainExtractor prompt. The emphasis markers
+  // are load-bearing: without *AS IS* and *DO NOT* edit the model summarises,
+  // and a summary can state things the passage does not.
   std::ostringstream oss;
-  oss << "[Task]\n";
-  oss << "Extract only the context statements that help answer the query.\n";
-  oss << "Do not add facts that are not present in the contexts.\n";
-  oss << "Return a concise compressed context, not an answer.\n\n";
-  oss << "[Query]\n" << query << "\n\n";
-  oss << "[Contexts]\n";
-  for (size_t i = 0; i < contexts.size(); ++i) {
-    oss << "Context " << (i + 1) << ":\n";
-    oss << contexts[i].chunk.text << "\n\n";
-  }
-  oss << "[Compressed Context]\n";
+  oss << "Given the following question and context, extract any part of the context *AS IS* that is "
+         "relevant to answer the question. If none of the context is relevant return "
+      << kCompressionNoOutput << ". Remember, *DO NOT* edit the extracted parts of the context.\n\n";
+  oss << "> Question: " << query << "\n";
+  oss << "> Context:\n";
+  oss << ">>>\n" << context.chunk.text << "\n>>>\n";
+  oss << "Extracted relevant parts:";
   return oss.str();
 }
 
-ContextCompressionResult buildCompressedContexts(const std::string& generated_text,
-                                                 const std::vector<RetrievedChunk>& fallback_contexts) {
-  std::string compressed = trim(generated_text);
-  compressed.erase(std::remove(compressed.begin(), compressed.end(), '\r'), compressed.end());
+SingleContextCompression compressSingleContext(const std::string& generated_text,
+                                               const RetrievedChunk& original) {
+  std::string extracted = trim(generated_text);
+  extracted.erase(std::remove(extracted.begin(), extracted.end(), '\r'), extracted.end());
 
-  if (compressed.empty()) {
-    return ContextCompressionResult{fallback_contexts, true};
+  if (extracted.empty()) {
+    return SingleContextCompression{original, false, true};
   }
-  if (compressed.size() > kMaxCompressedChars) {
-    compressed.resize(kMaxCompressedChars);
-    compressed = trim(compressed);
+  // Matched case-insensitively: a 270M model asked for NO_OUTPUT writes
+  // "No_OUTPUT" or "no_output" often enough that an exact match would file the
+  // token itself as the extracted evidence.
+  if (containsIgnoreCase(extracted, kCompressionNoOutput)) {
+    return SingleContextCompression{original, true, false};
   }
-  if (compressed.empty()) {
-    return ContextCompressionResult{fallback_contexts, true};
+  if (extracted.size() > kMaxCompressedChars) {
+    truncateUtf8(extracted, kMaxCompressedChars);
+    extracted = trim(extracted);
+  }
+  if (extracted.empty()) {
+    return SingleContextCompression{original, false, true};
   }
 
-  RetrievedChunk merged;
-  if (!fallback_contexts.empty()) {
-    merged = fallback_contexts.front();
-  }
-  merged.chunk.chunk_id = -1;
-  merged.chunk.doc_id = "compressed";
-  merged.chunk.text = std::move(compressed);
-
-  return ContextCompressionResult{{std::move(merged)}, false};
+  // Only the text changes. doc_id, scores and sentence range stay, so this mode
+  // needs no provenance side-channel to keep retrieval metrics computable.
+  RetrievedChunk compressed = original;
+  compressed.chunk.text = std::move(extracted);
+  return SingleContextCompression{std::move(compressed), false, false};
 }
 
 }  // namespace rag
