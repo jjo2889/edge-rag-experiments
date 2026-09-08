@@ -4,8 +4,9 @@
 
 ## 0) 준비 항목 구분
 
-- 직접 준비(필수): 생성 모델 파일 1개
-  - `models/gemma/gemma-3-270m-it-Q4_K_S.gguf`
+- 생성 모델 준비(택1)
+  - 직접 준비: `models/gemma/gemma-3-270m-it-Q4_K_S.gguf`
+  - 스크립트 준비: `scripts/setup_llm_model.sh` 실행 (고정 revision, 체크섬 검증)
 - 임베딩 모델 준비(택1)
   - 직접 준비: `models/all-MiniLM-L6-v2-onnx/model.onnx`, `models/all-MiniLM-L6-v2-onnx/tokenizer.json`
   - 스크립트 준비: `scripts/setup_embedding_model.sh` 실행
@@ -76,7 +77,11 @@ scripts/rebuild_llama.sh
 
 ## 4) 모델 파일 배치
 
-- 생성 모델(직접 준비): `models/gemma/gemma-3-270m-it-Q4_K_S.gguf`
+- 생성 모델(택1)
+  - 직접 준비: `models/gemma/gemma-3-270m-it-Q4_K_S.gguf`
+  - 스크립트 준비: `scripts/setup_llm_model.sh` 실행 — `unsloth/gemma-3-270m-it-GGUF` 저장소,
+    고정 revision에서 받고 sha256 체크섬을 검증한다. `LLM_MODEL_REPO`/`LLM_REVISION`/
+    `LLM_MODEL_FILE`로 override 가능.
 - 임베딩 모델(택1)
   - 직접 준비: `models/all-MiniLM-L6-v2-onnx/model.onnx`, `models/all-MiniLM-L6-v2-onnx/tokenizer.json`
   - 스크립트 준비:

@@ -271,6 +271,8 @@ nlohmann::json buildPredictionRow(const std::string& sample_id,
   row["response"] = result.answer;
   row["retrieved_contexts"] = retrieved_contexts;
   row["reference"] = reference;
+  row["reranker_backend"] = result.reranker_backend.has_value() ? nlohmann::json(*result.reranker_backend)
+                                                                 : nlohmann::json(nullptr);
   row["qrel_doc_ids"] = qrel_doc_ids;
   row["retrieved_ranks"] = retrieved_ranks;
   row["retrieved_doc_ids"] = retrieved_doc_ids;

@@ -2,7 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
-#include <stdexcept>
+#include <optional>
+#include <string>
 #include <utility>
 
 #include "advanced_query_transformer.hpp"
@@ -159,21 +160,14 @@ RagResult RagPipeline::run(const std::string& query,
   const auto retrieve_end = std::chrono::steady_clock::now();
 
   const auto rerank_start = std::chrono::steady_clock::now();
-  std::string reranker_backend_used;
-  if (retrieval_active && advanced == AdvancedMode::Rerank) {
-    // What advanced=none would have used: the first top_k of the retrieval
-    // order. If the reranker hands that same selection back, this query got the
-    // baseline while being counted as a rerank.
-    std::vector<RetrievedChunk> retrieval_order_top_k(
-        contexts.begin(),
-        contexts.begin() + std::min(contexts.size(), static_cast<size_t>(top_k_)));
-
+  std::optional<std::string> reranker_backend;
+  if (advanced == AdvancedMode::Rerank) {
     if (bge_reranker_) {
       contexts = bge_reranker_->rerank(query, contexts, top_k_);
-      reranker_backend_used = "bge";
+      reranker_backend = "bge";
     } else {
       contexts = rerankByLexicalOverlap(query, contexts, top_k_);
-      reranker_backend_used = "lexical";
+      reranker_backend = "lexical";
     }
     technique_effect = classifyContextTransform(false, retrieval_order_top_k, contexts);
   }
@@ -274,7 +268,7 @@ RagResult RagPipeline::run(const std::string& query,
   result.reranker_backend_used = reranker_backend_used;
   result.hyde_documents = std::move(hyde_documents);
   result.contexts = contexts;
-  result.pre_transform_contexts = std::move(pre_transform_contexts);
+  result.reranker_backend = reranker_backend;
   return result;
 }
 

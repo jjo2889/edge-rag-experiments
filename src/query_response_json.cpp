@@ -213,6 +213,8 @@ nlohmann::json buildSingleRunSuccessJson(const QueryRequest& request,
   output["error"] = nullptr;
   output["mode"] = "naive_rag";
   output["advanced"] = advancedModeToString(request.advanced);
+  output["reranker_backend"] =
+      result.reranker_backend.has_value() ? nlohmann::json(*result.reranker_backend) : nlohmann::json(nullptr);
   output["retrieval_query"] = result.retrieval_query;
   output["request"] = nlohmann::json{{"run_id", nullableString(request.run_id)},
                                      {"dataset", nullableString(request.dataset)},
