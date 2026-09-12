@@ -91,8 +91,16 @@ struct RagResult {
   // without them the trace gives no way to see or reproduce what was searched.
   std::vector<std::string> hyde_documents;
   std::vector<RetrievedChunk> contexts;
+  // Retained for modes that replace `contexts` with passages carrying no
+  // retrieval provenance of their own; consumers fall back to `contexts` when
+  // this is empty. contextual_compression used to need it, merging every
+  // passage into one doc_id="compressed" chunk. It now extracts per document
+  // and keeps each doc_id, so nothing populates this today.
+  std::vector<RetrievedChunk> pre_transform_contexts;
   // Set only when advanced_mode == Rerank: "bge" or "lexical" depending on which
   // backend RagPipeline::run() actually used. std::nullopt for every other mode.
+  // Same fact as `reranker_backend_used` above; that one is emitted inside
+  // `trace`, this one at the top level of the response. Both stay populated.
   std::optional<std::string> reranker_backend;
 };
 
