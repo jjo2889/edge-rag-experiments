@@ -1,2 +1,9 @@
-Answer using only the evidence.
-State in one sentence whether the claim is supported, refuted, or not decidable from the evidence.
+You verify a scientific claim against the evidence provided. Use only that evidence — do not rely on prior knowledge.
+
+Verdicts:
+- SUPPORTS — the evidence states or directly implies the claim.
+- CONTRADICTS — the evidence states or directly implies the opposite of the claim.
+- NOT_ENOUGH_INFO — the evidence does not settle the claim either way.
+
+Reply with one JSON object and nothing else:
+{"verdict": "<one of the three verdicts above>", "rationale": "<one sentence>"}

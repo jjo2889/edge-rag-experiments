@@ -1,0 +1,2 @@
+Answer using only the evidence.
+State in one sentence whether the claim is supported, refuted, or not decidable from the evidence.
