@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -161,7 +162,14 @@ RagResult RagPipeline::run(const std::string& query,
 
   const auto rerank_start = std::chrono::steady_clock::now();
   std::optional<std::string> reranker_backend;
-  if (advanced == AdvancedMode::Rerank) {
+  if (retrieval_active && advanced == AdvancedMode::Rerank) {
+    // What advanced=none would have used: the first top_k of the retrieval
+    // order. If the reranker hands that same selection back, this query got the
+    // baseline while being counted as a rerank.
+    std::vector<RetrievedChunk> retrieval_order_top_k(
+        contexts.begin(),
+        contexts.begin() + std::min(contexts.size(), static_cast<size_t>(top_k_)));
+
     if (bge_reranker_) {
       contexts = bge_reranker_->rerank(query, contexts, top_k_);
       reranker_backend = "bge";
@@ -265,9 +273,10 @@ RagResult RagPipeline::run(const std::string& query,
 
   result.transform_used_fallback = transform_used_fallback;
   result.technique_effect = technique_effect;
-  result.reranker_backend_used = reranker_backend_used;
+  result.reranker_backend_used = reranker_backend.value_or("");
   result.hyde_documents = std::move(hyde_documents);
   result.contexts = contexts;
+  result.pre_transform_contexts = std::move(pre_transform_contexts);
   result.reranker_backend = reranker_backend;
   return result;
 }

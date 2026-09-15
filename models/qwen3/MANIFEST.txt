@@ -1,0 +1,6 @@
+# Qwen3 dense Q4_K_M — 크기 사다리 4칸. 배포자 unsloth 로 통일 (양자화 절차 동일).
+# 형식: size  repo  revision  file  sha256  bytes
+0.6B  unsloth/Qwen3-0.6B-GGUF  50968a4468ef4233ed78cd7c3de230dd1d61a56b  Qwen3-0.6B-Q4_K_M.gguf  ac2d97712095a558e31573f62f466a3f9d93990898b0ec79d7c974c1780d524a  396705472
+1.7B  unsloth/Qwen3-1.7B-GGUF  d7f544eead698dbd1f15126ef60b45a1e1933222  Qwen3-1.7B-Q4_K_M.gguf  b139949c5bd74937ad8ed8c8cf3d9ffb1e99c866c823204dc42c0d91fa181897  1107409472
+4B  unsloth/Qwen3-4B-GGUF  22c9fc8a8c7700b76a1789366280a6a5a1ad1120  Qwen3-4B-Q4_K_M.gguf  f6f851777709861056efcdad3af01da38b31223a3ba26e61a4f8bf3a2195813a  2497281312
+8B  unsloth/Qwen3-8B-GGUF  a6adef130ffb23ddaf1a62fec9dced968c9bc482  Qwen3-8B-Q4_K_M.gguf  120307ba529eb2439d6c430d94104dabd578497bc7bfe7e322b5d9933b449bd4  5027784512

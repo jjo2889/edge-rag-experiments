@@ -1,0 +1,73 @@
+llama_model_path: "models/qwen3/Qwen3-1.7B-Q4_K_M.gguf"
+onnx_model_path: "models/all-MiniLM-L6-v2-onnx/model.onnx"
+tokenizer_json_path: "models/all-MiniLM-L6-v2-onnx/tokenizer.json"
+
+# Raspberry Pi target 기준 기본값: CPU-only
+n_gpu_layers: 99
+n_ctx: 2048
+n_batch: 512
+n_threads: 4
+
+# gemma-3-270m-it은 instruction tuned 모델이라 raw completion으로 넣으면 지시를
+# 따르지 않고 프롬프트를 이어쓴다. 끄고 측정했을 때 SciFact 30문항 중
+# 시스템 프롬프트 문구를 그대로 답변으로 뱉은 것이 6건(20%), 클레임을 그대로
+# 복사한 것이 6건(20%), 128토큰 상한 폭주가 3건이었다.
+#
+# 켜면 llama.cpp가 <start_of_turn>user ... <start_of_turn>model 로 감싸주고,
+# Gemma template이 system role을 첫 user 턴에 병합해준다. 12문항 재측정에서
+# 프롬프트 누수와 클레임 복사 모두 0건, 폭주 0건. 이전 주석이 경고하던
+# "즉시 EOG로 빈 응답" 회귀는 재현되지 않았다 (2026-08-02).
+use_model_chat_template: true
+
+# 이 모델의 모든 프롬프트(최종 답변과 보조 생성 양쪽)에 덧붙일 문자열.
+#
+# 하이브리드 추론 모델은 스위치가 없으면(Qwen3는 "/no_think") 토큰 예산을 전부
+# 사고에 쓰고 답을 내지 않는다. 데이터셋 프롬프트 파일이 아니라 여기 두는
+# 이유는 둘이다. 보조 생성은 시스템 프롬프트를 빈 문자열로 넘기므로 그쪽에
+# 넣으면 닿지 않고, 데이터셋 프롬프트는 모델 중립이어야 한다.
+# 추론 모드가 없는 모델에서는 비워둔다.
+reasoning_suppress_marker: "/no_think"
+
+# Generation length policy:
+# - Supported key: max_new_tokens
+# - Unsupported key: max_tokens (startup error)
+max_new_tokens: 128
+temperature: 0.1
+top_k: 40
+top_p: 0.95
+seed: 42
+
+# repetition_penalty:
+# - 1.0 = disabled
+# - > 1.0 = penalize repeated tokens in the last N tokens
+repetition_penalty: 1.1
+repetition_penalty_last_n: 64
+
+# 반복 출력이나 프롬프트 재생산이 시작되면 여기서 자른다.
+#
+# PromptBuilder는 두 가지 표식을 찍는다: 섹션 헤더는 대괄호로(`[Passages]`),
+# 개별 항목 라벨은 대괄호 없이(`Passage 1:`, `Evidence 1:`). 아래 목록은 원래
+# 대괄호 형태만 담고 있어서, 모델이 답변 뒤에 `Passage 4:` 하고 컨텍스트 나열을
+# 이어가면 아무것도 매칭되지 않아 max_new_tokens까지 폭주했다.
+# NQ 25질의 실측: 구조 누수 20%, 상한 도달 24%.
+# 항목 라벨 두 줄을 추가해 그 구멍을 메운다 (2026-08-01).
+#   NQ  : 구조 누수 20% -> 0%, 상한 24% -> 8%, 생성 평균 2013ms -> 1441ms
+#   SciFact: 25건 중 24건 무변화(정상 답변을 자르지 않음), 폭주 1건만 단축
+# 매칭에 선행 개행을 요구하므로 문장 중간의 같은 단어는 걸리지 않는다.
+stop_strings:
+  - "\nPassage "
+  - "\nEvidence "
+  - "\nI don't know"
+  - "\n[Citation"
+  - "\n[Explanation"
+  - "\n[Context"
+  - "\n[Passages"
+  - "\n[Evidence"
+  - "\n[Question"
+  - "\n[Claim"
+  - "\n[Answer"
+  - "\n[Output"
+  - "\n[Explanation"
+  - "\n[Note"
+  - "\n**"
+  - "\n```"
